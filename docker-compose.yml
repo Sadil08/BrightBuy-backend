@@ -1,0 +1,67 @@
+# Local development stack (specs/global/12_DEVOPS_CICD.md §1.3): MySQL 8, MinIO (S3-compatible
+# object storage, resolved OQ-3), and the backend API itself. Bring it up with:
+#   docker compose up --build
+#
+# The `brightbuy-shared` network lets brightbuy-frontend's own docker-compose.yml reach this
+# stack's `api` service by name — create it once with:
+#   docker network create brightbuy-shared
+
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_DATABASE: brightbuy
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-devrootpass}
+      MYSQL_USER: ${DB_APP_USER:-brightbuy_app}
+      MYSQL_PASSWORD: ${DB_APP_PASSWORD:-devapppass}
+    ports:
+      # Host-side 3307, not 3306: a machine that already runs its own local MySQL (common on a
+      # dev laptop used for coursework) would otherwise collide on the default port. Other
+      # services in this compose file reach this one at `mysql:3306` over the Docker network
+      # regardless — this mapping only matters for connecting a GUI client from the host.
+      - "3307:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-devaccesskey}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-devsecretkey}
+    ports:
+      - "9000:9000" # S3 API
+      - "9001:9001" # web console
+    volumes:
+      - minio-data:/data
+
+  api:
+    build: .
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      ADDR: ":8080"
+      APP_ENV: "local"
+      DB_DSN: "${DB_APP_USER:-brightbuy_app}:${DB_APP_PASSWORD:-devapppass}@tcp(mysql:3306)/brightbuy?parseTime=true"
+      S3_ENDPOINT_URL: "http://minio:9000"
+      JWT_SIGNING_KEY: ${JWT_SIGNING_KEY:-dev-only-signing-key-change-me}
+    ports:
+      - "8080:8080"
+    networks:
+      default: {}
+      brightbuy-shared: {}
+
+volumes:
+  mysql-data: {}
+  minio-data: {}
+
+networks:
+  brightbuy-shared:
+    name: brightbuy-shared
+    external: true

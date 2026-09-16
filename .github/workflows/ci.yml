@@ -1,0 +1,81 @@
+# CI pipeline for brightbuy-backend — specs/global/12_DEVOPS_CICD.md §2.1.
+#
+# Stage order matters: cheap/fast checks (format, vet) run before slow ones (integration tests,
+# image build), so a trivial mistake fails in seconds, not minutes.
+name: backend-ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: gofmt (fails if anything is unformatted)
+        run: |
+          UNFORMATTED=$(gofmt -l .)
+          if [ -n "$UNFORMATTED" ]; then
+            echo "The following files are not gofmt'd:"
+            echo "$UNFORMATTED"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: staticcheck
+        uses: dominikh/staticcheck-action@v1
+        with:
+          version: "latest"
+
+      - name: gitleaks (secret scan)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Unit tests
+        run: go test ./... -short -v
+
+      # Integration tests need a real MySQL 8 — provided here as a GitHub Actions service
+      # container (specs/global/12_DEVOPS_CICD.md §2.1 step 5). Runs once 01-catalog's first
+      # migration and testcontainers-go integration suite exist; the job step is here now so it's
+      # enforcing from day one rather than bolted on later.
+      - name: Integration tests
+        if: false # flip to `true` once db/migrations and *_test.go with the `integration` build tag exist
+        env:
+          DB_DSN: "root:rootpass@tcp(127.0.0.1:3306)/brightbuy_test?parseTime=true"
+        services:
+          mysql:
+            image: mysql:8.0
+            env:
+              MYSQL_ROOT_PASSWORD: rootpass
+              MYSQL_DATABASE: brightbuy_test
+            ports: ["3306:3306"]
+            options: >-
+              --health-cmd "mysqladmin ping -h localhost"
+              --health-interval 5s
+              --health-retries 10
+        run: go test ./... -tags=integration -v
+
+      - name: Build (compile check)
+        run: go build ./...
+
+  build-image:
+    needs: lint-and-test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker image
+        run: docker build -t brightbuy-backend:${{ github.sha }} .
+      # Pushing to a registry (GHCR) is added once a registry/hosting target is chosen
+      # (TBD-7, specs/global/10_BA_AUDIT_OPEN_QUESTIONS.md).
