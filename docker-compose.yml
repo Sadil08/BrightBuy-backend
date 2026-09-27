@@ -19,7 +19,7 @@ services:
       # dev laptop used for coursework) would otherwise collide on the default port. Other
       # services in this compose file reach this one at `mysql:3306` over the Docker network
       # regardless — this mapping only matters for connecting a GUI client from the host.
-      - "3307:3306"
+      - "3308:3306"
     volumes:
       - mysql-data:/var/lib/mysql
     healthcheck:
@@ -27,9 +27,10 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    command: --log-bin-trust-function-creators=1
 
   minio:
-    image: minio/minio:latest
+    image: quay.io/minio/minio:RELEASE.2025-07-23T15-54-02Z
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${S3_ACCESS_KEY:-devaccesskey}

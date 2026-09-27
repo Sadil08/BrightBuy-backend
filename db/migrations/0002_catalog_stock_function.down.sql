@@ -1,0 +1,1 @@
+DROP FUNCTION IF EXISTS fn_is_variant_in_stock;
