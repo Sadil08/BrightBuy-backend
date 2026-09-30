@@ -24,6 +24,10 @@ import (
 	"brightbuy-backend/internal/shared/config"
 	"brightbuy-backend/internal/shared/dbx"
 	"brightbuy-backend/internal/shared/logging"
+
+	deliveryapp "brightbuy-backend/internal/delivery/app"
+	deliveryhttp "brightbuy-backend/internal/delivery/httpapi"
+	deliverymysql "brightbuy-backend/internal/delivery/mysql"
 )
 
 func main() {
@@ -74,6 +78,12 @@ func main() {
 	// and whether to restart it if it's stuck.
 	r.Get("/healthz", handleLiveness)
 	r.Get("/readyz", handleReadiness(db))
+
+	deliveryRepository := deliverymysql.NewRepository(db)
+	deliveryService := deliveryapp.NewService(deliveryRepository, time.Now)
+	deliveryHandler := deliveryhttp.NewHandler(deliveryService)
+
+	deliveryhttp.RegisterRoutes(r, deliveryHandler)
 
 	// Feature routes get registered here, one line per feature, as each one is built:
 	//   catalogHandler := catalogHttp.NewHandler(catalogService)
