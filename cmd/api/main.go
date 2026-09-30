@@ -36,6 +36,10 @@ import (
 	"brightbuy-backend/internal/shared/dbx"
 	"brightbuy-backend/internal/shared/logging"
 	"brightbuy-backend/internal/shared/ratelimit"
+
+	deliveryapp "brightbuy-backend/internal/delivery/app"
+	deliveryhttp "brightbuy-backend/internal/delivery/httpapi"
+	deliverymysql "brightbuy-backend/internal/delivery/mysql"
 )
 
 func main() {
@@ -150,6 +154,12 @@ func main() {
 		identityhttp.RegisterRoutes(apiRouter, authHandler, adminHandler, tokenIssuer, registerIPLimiter, loginIPLimiter)
 		carthttp.RegisterRoutes(apiRouter, cartHandler, tokenIssuer)
 	})
+
+	deliveryRepository := deliverymysql.NewRepository(db)
+	deliveryService := deliveryapp.NewService(deliveryRepository, time.Now)
+	deliveryHandler := deliveryhttp.NewHandler(deliveryService)
+
+	deliveryhttp.RegisterRoutes(r, deliveryHandler)
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,
