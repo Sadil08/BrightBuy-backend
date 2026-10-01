@@ -14,8 +14,8 @@ func (mode DeliveryMode) Valid() bool {
 }
 
 type LineInput struct {
-	VariantID int
-	Quantity  int
+	VariantID int `json:"variant_id"`
+	Quantity  int `json:"quantity"`
 }
 
 type Estimate struct {
