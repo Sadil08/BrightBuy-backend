@@ -1,5 +1,5 @@
-DROP VIEW IF EXISTS vw_reporting_customer_order_payment;
-DROP VIEW IF EXISTS vw_reporting_upcoming_deliveries;
-DROP VIEW IF EXISTS vw_reporting_category_orders;
-DROP VIEW IF EXISTS vw_reporting_top_selling_products;
-DROP VIEW IF EXISTS vw_reporting_quarterly_sales;
+DROP VIEW IF EXISTS vw_customer_order_payment;
+DROP VIEW IF EXISTS vw_upcoming_deliveries;
+DROP VIEW IF EXISTS vw_category_orders;
+DROP VIEW IF EXISTS vw_top_selling_products;
+DROP VIEW IF EXISTS vw_quarterly_sales;
