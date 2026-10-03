@@ -67,7 +67,7 @@ func (h *Handler) quarterlySales(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) topSellingProducts(w http.ResponseWriter, r *http.Request) {
-	from, to, err := queryDateRange(r)
+	from, to, err := optionalDateRange(r)
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "INVALID_DATE_RANGE", err.Error())
 		return
