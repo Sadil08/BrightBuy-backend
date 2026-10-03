@@ -1,6 +1,17 @@
 // This file is the HTTP layer: it receives web requests, reads the input,
 // calls the cart service, and sends back JSON.
 
+//=====================================================
+
+// NOTE:
+// This cart implementation currently accepts customer_id from the request for local
+// development convenience. Once the auth feature is implemented, this must be
+// replaced with the authenticated customer from the request context or JWT/session.
+// Cart ownership must always be tied to the logged-in user and never to untrusted
+// client input.
+
+//======================================================
+
 package httpapi // package name for this folder (the "httpapi" layer)
 
 import (
