@@ -3,25 +3,75 @@ package httpapi
 import (
 	"context"
 	"net/http"
-
-	"brightbuy-backend/internal/shared/httpx"
 )
 
-type roleContextKey struct{}
+type contextKey string
 
-// WithRole is called by the authentication middleware after it validates the JWT and resolves the
-// user's role from the database. Reporting never trusts a client-supplied role header.
-func WithRole(ctx context.Context, role string) context.Context {
-	return context.WithValue(ctx, roleContextKey{}, role)
+const permissionsContextKey contextKey = "permissions"
+
+// WithPermissions stores authenticated permissions in the request context.
+//
+// IMPORTANT:
+// This function should ONLY be called by your trusted authentication/
+// authorization middleware after the user's JWT/session has been verified.
+//
+// Do not populate permissions from a client-controlled header or query parameter.
+func WithPermissions(ctx context.Context, permissions []string) context.Context {
+	return context.WithValue(
+		ctx,
+		permissionsContextKey,
+		permissions,
+	)
 }
 
-func RequireManagerOrAdmin(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		role, ok := r.Context().Value(roleContextKey{}).(string)
-		if !ok || (role != "MANAGER" && role != "ADMIN") {
-			httpx.WriteError(w, http.StatusForbidden, "FORBIDDEN", "manager or admin role required")
-			return
+// PermissionsFromContext returns the permissions stored by the
+// authentication middleware.
+func PermissionsFromContext(ctx context.Context) []string {
+	permissions, ok := ctx.Value(permissionsContextKey).([]string)
+	if !ok {
+		return nil
+	}
+
+	return permissions
+}
+
+// RequirePermission protects an endpoint with a specific permission.
+//
+// Example:
+//
+//	r.Use(RequirePermission("reports:view"))
+//
+// A request is allowed only when the authenticated user's permissions
+// contain the required permission.
+func RequirePermission(permission string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+			permissions := PermissionsFromContext(r.Context())
+
+			if !hasPermission(permissions, permission) {
+				http.Error(
+					w,
+					"forbidden",
+					http.StatusForbidden,
+				)
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func hasPermission(
+	permissions []string,
+	required string,
+) bool {
+	for _, permission := range permissions {
+		if permission == required {
+			return true
 		}
-		next.ServeHTTP(w, r)
-	})
+	}
+
+	return false
 }
