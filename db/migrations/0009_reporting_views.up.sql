@@ -38,7 +38,7 @@ JOIN product_variant pv ON pv.variant_id = oi.variant_id
 JOIN product p ON p.product_id = pv.product_id
 WHERE o.status <> 'Cancelled';
 
-CREATE OR REPLACE VIEW vw_category_orders AS
+CREATE OR REPLACE VIEW vw_category_wise_orders AS
 SELECT DISTINCT
     o.order_id,
     o.order_date,
