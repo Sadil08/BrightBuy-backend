@@ -1,3 +1,10 @@
+// NOTE:
+// This cart implementation currently accepts customer_id from the request for local
+// development convenience. Once the auth feature is implemented, this must be
+// replaced with the authenticated customer from the request context or JWT/session.
+// Cart ownership must always be tied to the logged-in user and never to untrusted
+// // client input.
+
 package app
 
 import (
@@ -36,11 +43,23 @@ func (s *Service) AddItem(
 		return nil, fmt.Errorf("quantity must be at least 1")
 	}
 
-	if err := s.validateStock(ctx, variantID, quantity); err != nil {
+	// start with the amount being added.
+	newQty := quantity
+
+	existing, err := s.repo.FindLine(ctx, customerID, variantID)
+	if err != nil {
+		return nil, fmt.Errorf("find cart item: %w", err)
+	}
+
+	if existing != nil {
+		newQty = existing.Quantity + quantity
+	}
+
+	if err := s.validateStock(ctx, variantID, newQty); err != nil {
 		return nil, err
 	}
 
-	return s.repo.UpsertLine(ctx, customerID, variantID, quantity)
+	return s.repo.UpsertLine(ctx, customerID, variantID, newQty)
 }
 
 func (s *Service) UpdateItemQuantity(
