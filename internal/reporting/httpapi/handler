@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"encoding/csv"
 	"net/http"
 	"strconv"
 	"strings"
@@ -18,10 +17,10 @@ type Handler struct {
 }
 
 const (
-	basisSales    = "order_date; cancelled orders excluded; sales value = total_amount - tax_amount - delivery_fee"
-	basisCategory = "order_date; cancelled orders excluded; an order is counted once per category it contains"
+	basisSales    = "order_date; Cancelled orders excluded; sales value excludes tax and delivery fee"
+	basisCategory = "order_date; Cancelled orders excluded; an order is counted once per category it contains"
 	basisDelivery = "unfulfilled orders; estimated_date is today or later"
-	basisCustomer = "customer order history; cancelled orders included; payment status is reported per order"
+	basisCustomer = "customer order history; payment status is reported per order; sales value excludes tax and delivery fee"
 )
 
 func NewHandler(service *app.Service) *Handler {
@@ -31,12 +30,11 @@ func NewHandler(service *app.Service) *Handler {
 func RegisterRoutes(r chi.Router, handler *Handler) {
 	r.Route("/api/v1/reports", func(r chi.Router) {
 		r.Use(RequirePermission("reports:view"))
-
 		r.Get("/quarterly-sales", handler.quarterlySales)
 		r.Get("/top-selling-products", handler.topSellingProducts)
 		r.Get("/category-wise-orders", handler.categoryWiseOrders)
 		r.Get("/upcoming-deliveries", handler.upcomingDeliveries)
-		r.Get("/customer-order-summary", handler.customerOrderPayments)
+		r.Get("/customer-order-summary", handler.customerOrderSummary)
 	})
 }
 
@@ -51,19 +49,18 @@ func (h *Handler) quarterlySales(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "INVALID_REPORT_REQUEST", err.Error())
 		return
 	}
-	w.Header().Set("X-Report-Basis", basisSales)
+	setBasis(w, basisSales)
 	if wantsCSV(r) {
-		writeCSV(w, "quarterly-sales.csv", []string{"year", "quarter", "sales_value"}, func(c *csv.Writer) error {
-			for _, row := range rows {
-				if err := c.Write([]string{strconv.Itoa(row.Year), strconv.Itoa(row.Quarter), row.SalesValue}); err != nil {
-					return err
-				}
-			}
-			return nil
-		})
+		csvRows := make([][]string, 0, len(rows))
+		for _, row := range rows {
+			csvRows = append(csvRows, []string{strconv.Itoa(row.Year), strconv.Itoa(row.Quarter), row.SalesValue})
+		}
+		if err := httpx.WriteCSV(w, "quarterly-sales.csv", []string{"year", "quarter", "salesValue"}, csvRows); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "CSV_WRITE_FAILED", "could not write report CSV")
+		}
 		return
 	}
-	writeJSON(w, rows)
+	httpx.WriteJSON(w, http.StatusOK, rows)
 }
 
 func (h *Handler) topSellingProducts(w http.ResponseWriter, r *http.Request) {
@@ -80,24 +77,24 @@ func (h *Handler) topSellingProducts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	rows, err := h.service.TopSellingProducts(r.Context(), from, to, limit)
+	report, err := h.service.TopSellingProducts(r.Context(), from, to, limit)
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "INVALID_REPORT_REQUEST", err.Error())
 		return
 	}
-	w.Header().Set("X-Report-Basis", basisSales)
+	setBasis(w, basisSales)
+	setDateRangeHeaders(w, report.From, report.To)
 	if wantsCSV(r) {
-		writeCSV(w, "top-selling-products.csv", []string{"product_id", "product_name", "quantity_sold", "revenue"}, func(c *csv.Writer) error {
-			for _, row := range rows {
-				if err := c.Write([]string{strconv.FormatInt(row.ProductID, 10), row.ProductName, strconv.FormatInt(row.Quantity, 10), row.Revenue}); err != nil {
-					return err
-				}
-			}
-			return nil
-		})
+		csvRows := make([][]string, 0, len(report.Products))
+		for _, row := range report.Products {
+			csvRows = append(csvRows, []string{strconv.FormatInt(row.ProductID, 10), row.ProductName, strconv.FormatInt(row.Quantity, 10), row.Revenue})
+		}
+		if err := httpx.WriteCSV(w, "top-selling-products.csv", []string{"productId", "productName", "quantitySold", "revenue"}, csvRows); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "CSV_WRITE_FAILED", "could not write report CSV")
+		}
 		return
 	}
-	writeJSON(w, rows)
+	httpx.WriteJSON(w, http.StatusOK, report)
 }
 
 func (h *Handler) categoryWiseOrders(w http.ResponseWriter, r *http.Request) {
@@ -106,24 +103,23 @@ func (h *Handler) categoryWiseOrders(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "INVALID_DATE_RANGE", err.Error())
 		return
 	}
-	rows, err := h.service.CategoryWiseOrders(r.Context(), from, to)
+	report, err := h.service.CategoryWiseOrders(r.Context(), from, to)
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "INVALID_REPORT_REQUEST", err.Error())
 		return
 	}
-	w.Header().Set("X-Report-Basis", basisCategory)
+	setBasis(w, basisCategory)
 	if wantsCSV(r) {
-		writeCSV(w, "category-wise-orders.csv", []string{"category_id", "category_name", "order_count"}, func(c *csv.Writer) error {
-			for _, row := range rows {
-				if err := c.Write([]string{strconv.FormatInt(row.CategoryID, 10), row.CategoryName, strconv.FormatInt(row.OrderCount, 10)}); err != nil {
-					return err
-				}
-			}
-			return nil
-		})
+		csvRows := make([][]string, 0, len(report.Categories))
+		for _, row := range report.Categories {
+			csvRows = append(csvRows, []string{strconv.FormatInt(row.CategoryID, 10), row.Name, strconv.FormatInt(row.OrderCount, 10), report.Note})
+		}
+		if err := httpx.WriteCSV(w, "category-wise-orders.csv", []string{"categoryId", "name", "orderCount", "note"}, csvRows); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "CSV_WRITE_FAILED", "could not write report CSV")
+		}
 		return
 	}
-	writeJSON(w, rows)
+	httpx.WriteJSON(w, http.StatusOK, report)
 }
 
 func (h *Handler) upcomingDeliveries(w http.ResponseWriter, r *http.Request) {
@@ -132,30 +128,21 @@ func (h *Handler) upcomingDeliveries(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "REPORT_QUERY_FAILED", "could not load the report")
 		return
 	}
-	w.Header().Set("X-Report-Basis", basisDelivery)
+	setBasis(w, basisDelivery)
 	if wantsCSV(r) {
-		writeCSV(w, "upcoming-delivery-estimates.csv", []string{"order_id", "customer_name", "customer_email", "delivery_mode", "address", "estimated_date", "order_status"}, func(c *csv.Writer) error {
-			for _, row := range rows {
-				if err := c.Write([]string{
-					strconv.FormatInt(row.OrderID, 10),
-					row.CustomerName,
-					row.CustomerEmail,
-					row.DeliveryMode,
-					row.Address,
-					row.EstimatedDate.Format("2006-01-02"),
-					row.OrderStatus,
-				}); err != nil {
-					return err
-				}
-			}
-			return nil
-		})
+		csvRows := make([][]string, 0, len(rows))
+		for _, row := range rows {
+			csvRows = append(csvRows, []string{strconv.FormatInt(row.OrderID, 10), row.CustomerName, row.CustomerEmail, row.DeliveryMode, row.Address, row.EstimatedDate.Format("2006-01-02"), row.OrderStatus})
+		}
+		if err := httpx.WriteCSV(w, "upcoming-deliveries.csv", []string{"orderId", "customerName", "customerEmail", "deliveryMode", "address", "estimatedDate", "orderStatus"}, csvRows); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "CSV_WRITE_FAILED", "could not write report CSV")
+		}
 		return
 	}
-	writeJSON(w, rows)
+	httpx.WriteJSON(w, http.StatusOK, rows)
 }
 
-func (h *Handler) customerOrderPayments(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) customerOrderSummary(w http.ResponseWriter, r *http.Request) {
 	from, to, err := optionalDateRange(r)
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "INVALID_DATE_RANGE", err.Error())
@@ -175,30 +162,18 @@ func (h *Handler) customerOrderPayments(w http.ResponseWriter, r *http.Request) 
 		httpx.WriteError(w, http.StatusBadRequest, "INVALID_REPORT_REQUEST", err.Error())
 		return
 	}
-	w.Header().Set("X-Report-Basis", basisCustomer)
+	setBasis(w, basisCustomer)
 	if wantsCSV(r) {
-		writeCSV(w, "customer-order-payment-summary.csv", []string{"customer_id", "customer_name", "customer_email", "order_id", "order_date", "order_status", "sales_value", "payment_method", "payment_status", "payment_amount"}, func(c *csv.Writer) error {
-			for _, row := range rows {
-				if err := c.Write([]string{
-					strconv.FormatInt(row.CustomerID, 10),
-					row.CustomerName,
-					row.CustomerEmail,
-					strconv.FormatInt(row.OrderID, 10),
-					row.OrderDate.Format(time.RFC3339),
-					row.OrderStatus,
-					row.SalesValue,
-					row.PaymentMethod,
-					row.PaymentStatus,
-					row.PaymentAmount,
-				}); err != nil {
-					return err
-				}
-			}
-			return nil
-		})
+		csvRows := make([][]string, 0, len(rows))
+		for _, row := range rows {
+			csvRows = append(csvRows, []string{strconv.FormatInt(row.CustomerID, 10), row.CustomerName, row.CustomerEmail, strconv.FormatInt(row.OrderID, 10), row.OrderDate.Format(time.RFC3339), row.OrderStatus, row.SalesValue, row.PaymentMethod, row.PaymentStatus, row.PaymentAmount})
+		}
+		if err := httpx.WriteCSV(w, "customer-order-summary.csv", []string{"customerId", "customerName", "customerEmail", "orderId", "orderDate", "orderStatus", "salesValue", "paymentMethod", "paymentStatus", "paymentAmount"}, csvRows); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "CSV_WRITE_FAILED", "could not write report CSV")
+		}
 		return
 	}
-	writeJSON(w, rows)
+	httpx.WriteJSON(w, http.StatusOK, rows)
 }
 
 func queryInt(r *http.Request, name string) (int, error) {
@@ -211,17 +186,6 @@ func queryInt(r *http.Request, name string) (int, error) {
 		return 0, &queryError{message: name + " must be an integer"}
 	}
 	return value, nil
-}
-
-func queryDateRange(r *http.Request) (time.Time, time.Time, error) {
-	from, to, err := optionalDateRange(r)
-	if err != nil {
-		return time.Time{}, time.Time{}, err
-	}
-	if from == nil || to == nil {
-		return time.Time{}, time.Time{}, &queryError{message: "from and to are required and must use YYYY-MM-DD"}
-	}
-	return *from, *to, nil
 }
 
 func optionalDateRange(r *http.Request) (*time.Time, *time.Time, error) {
@@ -252,21 +216,19 @@ func wantsCSV(r *http.Request) bool {
 	return strings.Contains(strings.ToLower(r.Header.Get("Accept")), "text/csv")
 }
 
-func writeJSON(w http.ResponseWriter, value any) {
-	httpx.WriteJSON(w, http.StatusOK, value)
+func setBasis(w http.ResponseWriter, basis string) {
+	w.Header().Set("X-Report-Basis", basis)
 }
 
-func writeCSV(w http.ResponseWriter, filename string, header []string, writeRows func(*csv.Writer) error) {
-	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
-	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
-	writer := csv.NewWriter(w)
-	if err := writer.Write(header); err != nil {
+func setDateRangeHeaders(w http.ResponseWriter, from, to *string) {
+	if from == nil {
+		w.Header().Set("X-Report-Range", "all-time")
 		return
 	}
-	if err := writeRows(writer); err != nil {
-		return
+	w.Header().Set("X-Report-From", *from)
+	if to != nil {
+		w.Header().Set("X-Report-To", *to)
 	}
-	writer.Flush()
 }
 
 type queryError struct {
