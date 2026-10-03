@@ -21,6 +21,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	catalogapp "brightbuy-backend/internal/catalog/app"
+	cataloghttp "brightbuy-backend/internal/catalog/httpapi"
+	catalogmysql "brightbuy-backend/internal/catalog/mysql"
 	"brightbuy-backend/internal/shared/config"
 	"brightbuy-backend/internal/shared/dbx"
 	"brightbuy-backend/internal/shared/logging"
@@ -75,10 +78,22 @@ func main() {
 	r.Get("/healthz", handleLiveness)
 	r.Get("/readyz", handleReadiness(db))
 
-	// Feature routes get registered here, one line per feature, as each one is built:
-	//   catalogHandler := catalogHttp.NewHandler(catalogService)
-	//   catalogHttp.RegisterRoutes(r, catalogHandler)
-	// Nothing exists yet — 01-catalog is next.
+	// 01-catalog — first feature module wired in. The composition root always builds bottom-up:
+	// repository (talks to MySQL) -> service (business logic, knows nothing about SQL or HTTP) ->
+	// handler (knows nothing about SQL, only calls the service) -> routes registered on the router.
+	productRepo := catalogmysql.NewProductRepository(db)
+	categoryRepo := catalogmysql.NewCategoryRepository(db)
+	catalogService := catalogapp.NewCatalogService(productRepo, categoryRepo)
+	catalogHandler := cataloghttp.NewCatalogHandler(catalogService)
+
+	// r.Route groups a set of routes under a shared path prefix ("/api/v1") without those routes
+	// needing to know that prefix exists — RegisterRoutes itself just registers "/categories",
+	// "/products", etc., exactly as plan.md §3 lists them; the final path a client actually requests
+	// (/api/v1/categories) is assembled here, in the one place that's allowed to care about URL
+	// structure across the whole API.
+	r.Route("/api/v1", func(apiRouter chi.Router) {
+		cataloghttp.RegisterRoutes(apiRouter, catalogHandler)
+	})
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,
