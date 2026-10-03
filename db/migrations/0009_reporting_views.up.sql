@@ -67,7 +67,7 @@ JOIN delivery d ON d.order_id = o.order_id
 WHERE o.status IN ('Placed', 'Confirmed', 'Processing', 'Shipped', 'Ready for Pickup')
   AND d.estimated_date >= CURRENT_DATE();
 
-CREATE OR REPLACE VIEW vw_customer_order_payment AS
+CREATE OR REPLACE VIEW vw_customer_order_summary AS
 SELECT
     c.customer_id,
     ua.name AS customer_name,
