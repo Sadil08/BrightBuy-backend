@@ -21,6 +21,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	cartapp "brightbuy-backend/internal/cart/app"
+	carthttp "brightbuy-backend/internal/cart/httpapi"
+	cartmysql "brightbuy-backend/internal/cart/mysql"
+
 	"brightbuy-backend/internal/shared/config"
 	"brightbuy-backend/internal/shared/dbx"
 	"brightbuy-backend/internal/shared/logging"
@@ -79,6 +83,13 @@ func main() {
 	//   catalogHandler := catalogHttp.NewHandler(catalogService)
 	//   catalogHttp.RegisterRoutes(r, catalogHandler)
 	// Nothing exists yet — 01-catalog is next.
+
+	// ---- Cart feature ----
+	// Built from the bottom layer up: each layer receives the one below it.
+	cartRepo := cartmysql.NewCartRepository(db)     // SQL layer: needs the DB connection
+	cartService := cartapp.NewService(cartRepo)     // business rules: needs the repository
+	cartHandler := carthttp.NewHandler(cartService) // HTTP layer: needs the service
+	carthttp.RegisterRoutes(r, cartHandler)         // attaches GET/POST/PATCH/DELETE /cart... to the router
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,
