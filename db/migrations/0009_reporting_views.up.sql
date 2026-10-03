@@ -9,7 +9,7 @@
    before merging this migration. `order` is avoided because ORDER is a MySQL reserved word.
 */
 
-CREATE OR REPLACE VIEW vw_reporting_quarterly_sales AS
+CREATE OR REPLACE VIEW vw_quarterly_sales AS
 SELECT
     o.order_id,
     o.order_date,
@@ -23,7 +23,7 @@ SELECT
 FROM orders o
 WHERE o.status <> 'Cancelled';
 
-CREATE OR REPLACE VIEW vw_reporting_top_selling_products AS
+CREATE OR REPLACE VIEW vw_top_selling_products AS
 SELECT
     o.order_date,
     pv.product_id,
@@ -38,7 +38,7 @@ JOIN product_variant pv ON pv.variant_id = oi.variant_id
 JOIN product p ON p.product_id = pv.product_id
 WHERE o.status <> 'Cancelled';
 
-CREATE OR REPLACE VIEW vw_reporting_category_orders AS
+CREATE OR REPLACE VIEW vw_category_orders AS
 SELECT DISTINCT
     o.order_id,
     o.order_date,
@@ -51,7 +51,7 @@ JOIN product_category pc ON pc.product_id = pv.product_id
 JOIN category c ON c.category_id = pc.category_id
 WHERE o.status <> 'Cancelled';
 
-CREATE OR REPLACE VIEW vw_reporting_upcoming_deliveries AS
+CREATE OR REPLACE VIEW vw_upcoming_deliveries AS
 SELECT
     o.order_id,
     ua.name AS customer_name,
@@ -67,7 +67,7 @@ JOIN delivery d ON d.order_id = o.order_id
 WHERE o.status IN ('Placed', 'Confirmed', 'Processing', 'Shipped', 'Ready for Pickup')
   AND d.estimated_date >= CURRENT_DATE();
 
-CREATE OR REPLACE VIEW vw_reporting_customer_order_payment AS
+CREATE OR REPLACE VIEW vw_customer_order_payment AS
 SELECT
     c.customer_id,
     ua.name AS customer_name,
