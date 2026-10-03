@@ -36,7 +36,7 @@ CREATE TABLE cart_item(
     
     CONSTRAINT uq_cart_item UNIQUE (cart_id, variant_id),  -- This constraint ensures that each cart can only have one entry for a specific product variant, preventing duplicate entries for the same variant in the same cart.
 
-    CONSTRAINT chk_cart_item_quantity CHECK (quantity >= 1),
+    CONSTRAINT chk_cart_item_quantity CHECK (quantity >= 1)
 
 )ENGINE =InnoDB;
 
