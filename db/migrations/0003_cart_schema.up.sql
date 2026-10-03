@@ -22,7 +22,6 @@ CREATE TABLE cart_item(
     variant_id INT NOT NULL,
     quantity INT NOT NULL,
 
-
     CONSTRAINT fk_cart_item_cart  -- create foreign key constraint for cart_item table referencing cart table
       FOREIGN KEY (cart_id)
       REFERENCES cart(cart_id)
