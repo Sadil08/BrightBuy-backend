@@ -6,36 +6,137 @@ import (
 	"testing"
 )
 
-func TestRequireManagerOrAdmin(t *testing.T) {
-	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-	handler := RequireManagerOrAdmin(next)
+func TestRequirePermission_AllowsUserWithPermission(t *testing.T) {
 
-	tests := []struct {
-		name   string
-		role   string
-		status int
-	}{
-		{name: "manager", role: "MANAGER", status: http.StatusOK},
-		{name: "admin", role: "ADMIN", status: http.StatusOK},
-		{name: "staff", role: "STAFF", status: http.StatusForbidden},
-		{name: "missing role", role: "", status: http.StatusForbidden},
+	handler := RequirePermission("reports:view")(
+		http.HandlerFunc(func(
+			w http.ResponseWriter,
+			r *http.Request,
+		) {
+			w.WriteHeader(http.StatusOK)
+		}),
+	)
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/reports/quarterly-sales",
+		nil,
+	)
+
+	ctx := WithPermissions(
+		req.Context(),
+		[]string{
+			"reports:view",
+		},
+	)
+
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusOK,
+			rec.Code,
+		)
+	}
+}
+
+func TestRequirePermission_RejectsUserWithoutPermission(t *testing.T) {
+
+	handler := RequirePermission("reports:view")(
+		http.HandlerFunc(func(
+			w http.ResponseWriter,
+			r *http.Request,
+		) {
+			w.WriteHeader(http.StatusOK)
+		}),
+	)
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/reports/quarterly-sales",
+		nil,
+	)
+
+	ctx := WithPermissions(
+		req.Context(),
+		[]string{
+			"orders:view",
+		},
+	)
+
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusForbidden,
+			rec.Code,
+		)
+	}
+}
+
+func TestRequirePermission_RejectsMissingPermissions(t *testing.T) {
+
+	handler := RequirePermission("reports:view")(
+		http.HandlerFunc(func(
+			w http.ResponseWriter,
+			r *http.Request,
+		) {
+			w.WriteHeader(http.StatusOK)
+		}),
+	)
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/reports/quarterly-sales",
+		nil,
+	)
+
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusForbidden,
+			rec.Code,
+		)
+	}
+}
+
+func TestHasPermission(t *testing.T) {
+
+	permissions := []string{
+		"orders:view",
+		"reports:view",
+		"products:view",
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/reports/quarterly-sales?year=2026", nil)
-			if tt.role != "" {
-				req = req.WithContext(WithRole(req.Context(), tt.role))
-			}
-			res := httptest.NewRecorder()
+	if !hasPermission(
+		permissions,
+		"reports:view",
+	) {
+		t.Fatal(
+			"expected reports:view permission to be found",
+		)
+	}
 
-			handler.ServeHTTP(res, req)
-
-			if res.Code != tt.status {
-				t.Fatalf("status = %d, want %d", res.Code, tt.status)
-			}
-		})
+	if hasPermission(
+		permissions,
+		"admin:delete",
+	) {
+		t.Fatal(
+			"did not expect admin:delete permission",
+		)
 	}
 }
