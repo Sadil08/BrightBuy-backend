@@ -9,6 +9,8 @@ import (
 
 	"brightbuy-backend/internal/reporting/app"
 	"brightbuy-backend/internal/shared/httpx"
+
+	"github.com/go-chi/chi/v5"
 )
 
 type Handler struct {
@@ -26,14 +28,16 @@ func NewHandler(service *app.Service) *Handler {
 	return &Handler{service: service}
 }
 
-func RegisterRoutes(r interface {
-	Get(string, http.HandlerFunc)
-}, handler *Handler) {
-	r.Get("/api/v1/reports/quarterly-sales", handler.quarterlySales)
-	r.Get("/api/v1/reports/top-selling-products", handler.topSellingProducts)
-	r.Get("/api/v1/reports/category-wise-orders", handler.categoryWiseOrders)
-	r.Get("/api/v1/reports/upcoming-delivery-estimates", handler.upcomingDeliveries)
-	r.Get("/api/v1/reports/customer-order-payment-summary", handler.customerOrderPayments)
+func RegisterRoutes(r chi.Router, handler *Handler) {
+	r.Route("/api/v1/reports", func(r chi.Router) {
+		r.Use(RequirePermission("reports:view"))
+
+		r.Get("/quarterly-sales", handler.quarterlySales)
+		r.Get("/top-selling-products", handler.topSellingProducts)
+		r.Get("/category-wise-orders", handler.categoryWiseOrders)
+		r.Get("/upcoming-deliveries", handler.upcomingDeliveries)
+		r.Get("/customer-order-summary", handler.customerOrderPayments)
+	})
 }
 
 func (h *Handler) quarterlySales(w http.ResponseWriter, r *http.Request) {
