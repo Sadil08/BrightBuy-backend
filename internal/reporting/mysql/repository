@@ -79,7 +79,7 @@ LIMIT ?`
 func (r *Repository) CategoryWiseOrders(ctx context.Context, dateRange *domain.DateRange) ([]domain.CategoryOrderRow, error) {
 	query := `
 SELECT category_id, category_name, COUNT(*) AS order_count
-FROM vw_category_orders`
+FROM vw_category_wise_orders`
 	args := make([]any, 0, 2)
 	if dateRange != nil {
 		query += ` WHERE order_date >= ? AND order_date < ?`
@@ -165,7 +165,7 @@ SELECT customer_id,
        payment_method,
        payment_status,
        CAST(payment_amount AS CHAR)
-FROM vw_customer_order_payment
+FROM vw_customer_order_summary
 WHERE 1 = 1`
 	args := make([]any, 0, 3)
 	if dateRange != nil {
