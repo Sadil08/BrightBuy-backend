@@ -19,7 +19,7 @@ func NewRepository(db *sql.DB) *Repository {
 func (r *Repository) QuarterlySales(ctx context.Context, year int) ([]domain.QuarterlySalesRow, error) {
 	const query = `
 SELECT report_year, report_quarter, CAST(COALESCE(SUM(sales_value), 0) AS CHAR)
-FROM vw_reporting_quarterly_sales
+FROM vw_quarterly_sales
 WHERE report_year = ?
 GROUP BY report_year, report_quarter
 ORDER BY report_quarter`
@@ -50,7 +50,7 @@ SELECT product_id,
        product_name,
        SUM(quantity_sold) AS quantity_sold,
        CAST(COALESCE(SUM(line_revenue), 0) AS CHAR) AS revenue
-FROM vw_reporting_top_selling_products
+FROM vw_top_selling_products
 WHERE order_date >= ? AND order_date < ?
 GROUP BY product_id, product_name
 ORDER BY quantity_sold DESC, revenue DESC, product_id ASC
@@ -79,7 +79,7 @@ LIMIT ?`
 func (r *Repository) CategoryWiseOrders(ctx context.Context, dateRange *domain.DateRange) ([]domain.CategoryOrderRow, error) {
 	query := `
 SELECT category_id, category_name, COUNT(*) AS order_count
-FROM vw_reporting_category_orders`
+FROM vw_category_orders`
 	args := make([]any, 0, 2)
 	if dateRange != nil {
 		query += ` WHERE order_date >= ? AND order_date < ?`
@@ -118,7 +118,7 @@ SELECT order_id,
        address,
        estimated_date,
        order_status
-FROM vw_reporting_upcoming_deliveries
+FROM vw_upcoming_deliveries
 ORDER BY estimated_date ASC, order_id ASC`
 
 	rows, err := r.db.QueryContext(ctx, query)
@@ -165,7 +165,7 @@ SELECT customer_id,
        payment_method,
        payment_status,
        CAST(payment_amount AS CHAR)
-FROM vw_reporting_customer_order_payment
+FROM vw_customer_order_payment
 WHERE 1 = 1`
 	args := make([]any, 0, 3)
 	if dateRange != nil {
