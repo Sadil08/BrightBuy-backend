@@ -1,0 +1,27 @@
+package httpapi
+
+import (
+	"context"
+	"net/http"
+
+	"brightbuy-backend/internal/shared/httpx"
+)
+
+type roleContextKey struct{}
+
+// WithRole is called by the authentication middleware after it validates the JWT and resolves the
+// user's role from the database. Reporting never trusts a client-supplied role header.
+func WithRole(ctx context.Context, role string) context.Context {
+	return context.WithValue(ctx, roleContextKey{}, role)
+}
+
+func RequireManagerOrAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		role, ok := r.Context().Value(roleContextKey{}).(string)
+		if !ok || (role != "MANAGER" && role != "ADMIN") {
+			httpx.WriteError(w, http.StatusForbidden, "FORBIDDEN", "manager or admin role required")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
