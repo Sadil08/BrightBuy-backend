@@ -158,7 +158,11 @@ func (s *AuthService) issueTokens(ctx context.Context, acct *domain.Account) (*T
 		return nil, err
 	}
 
-	accessToken, err := s.tokens.IssueAccessToken(acct.ID, acct.RoleName, perms)
+	customerID := 0 // stays 0 for staff/manager/admin accounts, which have no customer profile
+	if acct.CustomerID != nil {
+		customerID = *acct.CustomerID
+	}
+	accessToken, err := s.tokens.IssueAccessTokenForCustomer(acct.ID, customerID, acct.RoleName, perms)
 	if err != nil {
 		return nil, err
 	}

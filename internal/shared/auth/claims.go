@@ -13,7 +13,11 @@ import "context"
 // per request (02_SECURITY_BASELINE.md §1.1) — it just checks "is this code in the list," which is
 // why this package can sit below identity without depending on it.
 type Claims struct {
-	UserID      int      `json:"sub"`
+	UserID int `json:"sub"`
+	// CustomerID is the account's customer profile id, or 0 for non-customer roles (and for tokens
+	// issued before this field existed). Lets customer-scoped features skip a user->customer lookup
+	// on every request.
+	CustomerID  int      `json:"cid,omitempty"`
 	Role        string   `json:"role"`
 	Permissions []string `json:"perms"`
 }

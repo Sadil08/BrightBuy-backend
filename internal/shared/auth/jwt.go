@@ -24,6 +24,7 @@ type jwtClaims struct {
 	jwt.RegisteredClaims
 	Role        string   `json:"role"`
 	Permissions []string `json:"perms"`
+	CustomerID  int      `json:"cid,omitempty"`
 }
 
 // ErrInvalidToken covers every way a token can fail verification — expired, bad signature,
@@ -56,6 +57,12 @@ func (t *TokenIssuer) AccessTokenTTL() time.Duration {
 // AccessTokenTTL from now. permissions should already be fully resolved (plan.md §5.1/§5.2) — this
 // function has no idea role_permission exists, it just encodes whatever list it's handed.
 func (t *TokenIssuer) IssueAccessToken(userID int, role string, permissions []string) (string, error) {
+	return t.IssueAccessTokenForCustomer(userID, 0, role, permissions)
+}
+
+// IssueAccessTokenForCustomer is IssueAccessToken plus the account's customer profile id (0 when the
+// account has none), so customer-scoped endpoints can read it straight from the verified claims.
+func (t *TokenIssuer) IssueAccessTokenForCustomer(userID, customerID int, role string, permissions []string) (string, error) {
 	now := time.Now()
 	claims := jwtClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -66,6 +73,7 @@ func (t *TokenIssuer) IssueAccessToken(userID int, role string, permissions []st
 		},
 		Role:        role,
 		Permissions: permissions,
+		CustomerID:  customerID,
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -100,5 +108,5 @@ func (t *TokenIssuer) VerifyAccessToken(tokenString string) (*Claims, error) {
 		return nil, ErrInvalidToken
 	}
 
-	return &Claims{UserID: userID, Role: claims.Role, Permissions: claims.Permissions}, nil
+	return &Claims{UserID: userID, CustomerID: claims.CustomerID, Role: claims.Role, Permissions: claims.Permissions}, nil
 }

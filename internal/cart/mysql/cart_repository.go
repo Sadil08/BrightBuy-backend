@@ -22,8 +22,8 @@ func NewCartRepository(db *sql.DB) *CartRepository {
 
 /*
 1. Check customerID is valid
-2. Make sure customer has a cart
-3. Find the cart ID
+2. Find the customer's cart (none yet = empty cart; reads never write)
+3. Remember the cart ID
 4. Get all cart items
 5. Get product + variant information
 6. Check whether items are available
@@ -42,26 +42,20 @@ func (r *CartRepository) Get(
 		return nil, fmt.Errorf("customer ID must be positive") // Step 1: Check customerID is valid
 	}
 
-	// Ensure this customer has a cart; the unique key handles concurrent requests.
-	// If the cart already exists, we just get its ID via LAST_INSERT_ID().
-	_, err := r.db.ExecContext(ctx, `   
-        INSERT INTO cart (customer_id)     
-        VALUES (?)
-        ON DUPLICATE KEY UPDATE cart_id = LAST_INSERT_ID(cart_id) 
-    `, customerID)
-	if err != nil {
-		return nil, fmt.Errorf("ensure cart: %w", err) // Step 2: Make sure customer has a cart
-	}
-
 	cart := &domain.Cart{
 		CustomerID: customerID,
-		Items:      make([]domain.CartItem, 0), // Step 3: Find the cart ID
+		Items:      make([]domain.CartItem, 0),
 	}
 
-	err = r.db.QueryRowContext(ctx, // Step 4: Get all cart items
+	// Reading never writes: a customer with no cart row yet just gets an empty cart (cartId 0). The
+	// row is created by the first UpsertLine, so GET /cart can't create rows or burn auto-increment ids.
+	err := r.db.QueryRowContext(ctx,
 		`SELECT cart_id FROM cart WHERE customer_id = ?`,
 		customerID,
 	).Scan(&cart.ID)
+	if err == sql.ErrNoRows {
+		return cart, nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("find cart: %w", err)
 	}
@@ -151,28 +145,9 @@ func (r *CartRepository) UpsertLine(
 	if customerID <= 0 || variantID <= 0 || quantity < 1 {
 		return nil, fmt.Errorf("invalid input: customerID=%d, variantID=%d, quantity=%d", customerID, variantID, quantity)
 	}
-	_, err := r.db.ExecContext(ctx, `
-	INSERT INTO cart (customer_id)
-	VALUES (?)
-	ON DUPLICATE KEY UPDATE cart_id = LAST_INSERT_ID(cart_id)
-`, customerID)
-
-	// Check whether the SQL query produced an error.
-
+	cartID, err := r.ensureCartID(ctx, customerID)
 	if err != nil {
-		return nil, fmt.Errorf("ensure cart: %w", err)
-	}
-
-	var cartID int
-
-	// Find the cart belonging to this customer.
-
-	err = r.db.QueryRowContext(ctx, `
-	SELECT cart_id FROM cart WHERE customer_id = ?
-`, customerID).Scan(&cartID)
-
-	if err != nil {
-		return nil, fmt.Errorf("find cart: %w", err)
+		return nil, err
 	}
 
 	// Add the product variant to the cart.
@@ -347,4 +322,29 @@ func (r *CartRepository) FindLineByID(
 		return nil, fmt.Errorf("find cart line by id: %w", err)
 	}
 	return &item, nil
+}
+
+// ensureCartID returns the customer's cart id, creating the row only if it doesn't exist yet. It
+// SELECTs first so the common case (cart already exists) doesn't run an INSERT that would burn an
+// auto-increment id; the unique key on customer_id plus ON DUPLICATE KEY keeps two concurrent first
+// writes safe (both end up with the same row).
+func (r *CartRepository) ensureCartID(ctx context.Context, customerID int) (int, error) {
+	var cartID int
+	err := r.db.QueryRowContext(ctx, `SELECT cart_id FROM cart WHERE customer_id = ?`, customerID).Scan(&cartID)
+	if err == nil {
+		return cartID, nil
+	}
+	if err != sql.ErrNoRows {
+		return 0, fmt.Errorf("find cart: %w", err)
+	}
+	if _, err := r.db.ExecContext(ctx, `
+        INSERT INTO cart (customer_id) VALUES (?)
+        ON DUPLICATE KEY UPDATE cart_id = LAST_INSERT_ID(cart_id)
+    `, customerID); err != nil {
+		return 0, fmt.Errorf("create cart: %w", err)
+	}
+	if err := r.db.QueryRowContext(ctx, `SELECT cart_id FROM cart WHERE customer_id = ?`, customerID).Scan(&cartID); err != nil {
+		return 0, fmt.Errorf("find cart: %w", err)
+	}
+	return cartID, nil
 }

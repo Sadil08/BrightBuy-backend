@@ -19,9 +19,10 @@ import (
 // by customer then variant, and user 7 -> customer 1, user 8 -> customer 2, anyone else has no
 // customer profile (like a staff account).
 type stubStore struct {
-	lines  map[int]map[int]int
-	ids    map[int]map[int]int
-	nextID int
+	lookups int // how many times CustomerIDForUser ran
+	lines   map[int]map[int]int
+	ids     map[int]map[int]int
+	nextID  int
 }
 
 const stubStock = 5
@@ -74,6 +75,7 @@ func (f *stubStore) VariantStock(_ context.Context, v int) (int, error) {
 	return stubStock, nil
 }
 func (f *stubStore) CustomerIDForUser(_ context.Context, userID int) (int, error) {
+	f.lookups++
 	switch userID {
 	case 7:
 		return 1, nil
@@ -85,14 +87,20 @@ func (f *stubStore) CustomerIDForUser(_ context.Context, userID int) (int, error
 
 // newServer wires the REAL routes + real auth middleware, so 401/403 gating is tested too.
 func newServer(t *testing.T) (*httptest.Server, *auth.TokenIssuer) {
+	srv, iss, _ := newServerWithStore(t)
+	return srv, iss
+}
+
+func newServerWithStore(t *testing.T) (*httptest.Server, *auth.TokenIssuer, *stubStore) {
 	t.Helper()
 	issuer := auth.NewTokenIssuer("test-signing-key-test-signing-key-123")
-	h := NewHandler(cartapp.NewService(newStub()))
+	store := newStub()
+	h := NewHandler(cartapp.NewService(store))
 	r := chi.NewRouter()
 	r.Route("/api/v1", func(api chi.Router) { RegisterRoutes(api, h, issuer) })
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
-	return srv, issuer
+	return srv, issuer, store
 }
 
 func do(t *testing.T, srv *httptest.Server, issuer *auth.TokenIssuer, userID int, role, method, path, body string) (int, map[string]any) {
@@ -232,3 +240,28 @@ func TestMerge(t *testing.T) {
 }
 
 func itoa(i int) string { b, _ := json.Marshal(i); return string(b) }
+
+func TestCustomerIDFromTokenSkipsLookup(t *testing.T) {
+	srv, iss, store := newServerWithStore(t)
+	tok, _ := iss.IssueAccessTokenForCustomer(7, 1, "CUSTOMER", nil)
+	req, _ := http.NewRequest("GET", srv.URL+"/api/v1/cart", nil)
+	req.AddCookie(&http.Cookie{Name: auth.AccessTokenCookie, Value: tok})
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("got %v, %v", resp, err)
+	}
+	resp.Body.Close()
+	if store.lookups != 0 {
+		t.Errorf("lookups = %d, want 0 when the token carries the customer id", store.lookups)
+	}
+}
+
+func TestOldTokenWithoutCustomerIDFallsBackToLookup(t *testing.T) {
+	srv, iss, store := newServerWithStore(t)
+	if s, _ := do(t, srv, iss, 7, "CUSTOMER", "GET", "/cart", ""); s != 200 { // plain IssueAccessToken: no cid
+		t.Fatalf("got %d, want 200", s)
+	}
+	if store.lookups != 1 {
+		t.Errorf("lookups = %d, want 1 (fallback)", store.lookups)
+	}
+}

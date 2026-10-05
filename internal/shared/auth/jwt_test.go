@@ -98,3 +98,20 @@ func TestClaimsHasPermission(t *testing.T) {
 		})
 	}
 }
+
+func TestCustomerIDRoundTripsThroughToken(t *testing.T) {
+	issuer := NewTokenIssuer("test-signing-key-test-signing-key-123")
+	token, err := issuer.IssueAccessTokenForCustomer(3, 9, "CUSTOMER", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims, err := issuer.VerifyAccessToken(token)
+	if err != nil || claims.UserID != 3 || claims.CustomerID != 9 {
+		t.Fatalf("got %+v, %v; want UserID 3, CustomerID 9", claims, err)
+	}
+	plain, _ := issuer.IssueAccessToken(3, "ADMIN", nil)
+	claims, _ = issuer.VerifyAccessToken(plain)
+	if claims.CustomerID != 0 {
+		t.Fatalf("CustomerID = %d, want 0 when none was set", claims.CustomerID)
+	}
+}

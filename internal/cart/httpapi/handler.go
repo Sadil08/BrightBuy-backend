@@ -43,13 +43,18 @@ type MergeRequestDTO struct {
 	Items []CartItemInputDTO `json:"items" validate:"required,max=100,dive"`
 }
 
-// customerID resolves the logged-in user (claims set by auth.Authenticate) to their customer id.
+// customerID returns the logged-in customer's id from the verified JWT claims (set by auth.Authenticate).
 func (h *Handler) customerID(w http.ResponseWriter, r *http.Request) (int, bool) {
 	claims := auth.ClaimsFromContext(r.Context())
 	if claims == nil {
 		httpx.WriteError(w, http.StatusUnauthorized, "UNAUTHENTICATED", "authentication required")
 		return 0, false
 	}
+	if claims.CustomerID > 0 {
+		return claims.CustomerID, true // normal path: no database round trip
+	}
+	// Fallback for access tokens issued before the customer id was added to the JWT (<= 15 min
+	// old): look it up once. Also what returns 403 for accounts with no customer profile.
 	id, err := h.service.CustomerIDForUser(r.Context(), claims.UserID)
 	if errors.Is(err, domain.ErrNotCustomer) {
 		httpx.WriteError(w, http.StatusForbidden, "FORBIDDEN", "only customers have a cart")
