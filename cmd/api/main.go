@@ -21,6 +21,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	cartapp "brightbuy-backend/internal/cart/app"
+	carthttp "brightbuy-backend/internal/cart/httpapi"
+	cartmysql "brightbuy-backend/internal/cart/mysql"
 	catalogapp "brightbuy-backend/internal/catalog/app"
 	cataloghttp "brightbuy-backend/internal/catalog/httpapi"
 	catalogmysql "brightbuy-backend/internal/catalog/mysql"
@@ -28,6 +31,7 @@ import (
 	identityhttp "brightbuy-backend/internal/identity/httpapi"
 	identitymysql "brightbuy-backend/internal/identity/mysql"
 	"brightbuy-backend/internal/shared/auth"
+
 	"brightbuy-backend/internal/shared/config"
 	"brightbuy-backend/internal/shared/dbx"
 	"brightbuy-backend/internal/shared/logging"
@@ -136,9 +140,15 @@ func main() {
 	authHandler := identityhttp.NewAuthHandler(authService, cookieSecure, loginEmailLimiter)
 	adminHandler := identityhttp.NewAdminHandler(accountService)
 
+	// 03-cart — third feature module, same bottom-up wiring as above.
+	cartRepo := cartmysql.NewCartRepository(db)
+	cartService := cartapp.NewService(cartRepo)
+	cartHandler := carthttp.NewHandler(cartService)
+
 	r.Route("/api/v1", func(apiRouter chi.Router) {
 		cataloghttp.RegisterRoutes(apiRouter, catalogHandler)
 		identityhttp.RegisterRoutes(apiRouter, authHandler, adminHandler, tokenIssuer, registerIPLimiter, loginIPLimiter)
+		carthttp.RegisterRoutes(apiRouter, cartHandler, tokenIssuer)
 	})
 
 	srv := &http.Server{
