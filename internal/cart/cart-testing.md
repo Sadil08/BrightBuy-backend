@@ -24,7 +24,6 @@ flowchart LR
 
 ## Prerequisites
 
-| Requirement | Check |
 |---|---|
 | Docker Desktop installed and **running** | `docker --version` |
 | Go installed | `go version` |
