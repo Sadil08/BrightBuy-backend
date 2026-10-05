@@ -38,6 +38,7 @@ type ListFilter struct {
 type ProductRepository interface {
 	List(ctx context.Context, filter ListFilter) ([]domain.Product, int, error)
 	GetByID(ctx context.Context, id int) (*domain.Product, error)
+	GetVariantForCart(ctx context.Context, variantID int) (*CartVariant, error)
 }
 
 // CategoryRepository is a second, separate, narrow port (Interface Segregation —
@@ -107,4 +108,13 @@ func (s *CatalogService) GetProduct(ctx context.Context, id int) (*domain.Produc
 // ListCategories is the category-browse use case (FR-CATALOG-4's "what can I filter by").
 func (s *CatalogService) ListCategories(ctx context.Context) ([]domain.Category, error) {
 	return s.categories.List(ctx)
+}
+
+// GetVariantForCart returns current price and stock for internal cart business logic.
+// It is not used to build the customer-facing catalog response.
+func (s *CatalogService) GetVariantForCart(
+	ctx context.Context,
+	variantID int,
+) (*CartVariant, error) {
+	return s.products.GetVariantForCart(ctx, variantID)
 }
