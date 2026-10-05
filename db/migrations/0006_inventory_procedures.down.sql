@@ -1,1 +1,0 @@
-DROP PROCEDURE IF EXISTS sp_adjust_stock;
