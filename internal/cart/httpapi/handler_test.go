@@ -10,7 +10,9 @@ import (
 
 	cartapp "brightbuy-backend/internal/cart/app"
 	"brightbuy-backend/internal/cart/domain"
+	catalogapp "brightbuy-backend/internal/catalog/app"
 	"brightbuy-backend/internal/shared/auth"
+	"brightbuy-backend/internal/shared/money"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -68,12 +70,6 @@ func (f *stubStore) DeleteLine(_ context.Context, c, v int) error {
 	delete(f.ids[c], v)
 	return nil
 }
-func (f *stubStore) VariantStock(_ context.Context, v int) (int, error) {
-	if v == 404 {
-		return 0, domain.ErrVariantNotFound
-	}
-	return stubStock, nil
-}
 func (f *stubStore) CustomerIDForUser(_ context.Context, userID int) (int, error) {
 	f.lookups++
 	switch userID {
@@ -95,7 +91,7 @@ func newServerWithStore(t *testing.T) (*httptest.Server, *auth.TokenIssuer, *stu
 	t.Helper()
 	issuer := auth.NewTokenIssuer("test-signing-key-test-signing-key-123")
 	store := newStub()
-	h := NewHandler(cartapp.NewService(store))
+	h := NewHandler(cartapp.NewService(store, stubCatalog{}))
 	r := chi.NewRouter()
 	r.Route("/api/v1", func(api chi.Router) { RegisterRoutes(api, h, issuer) })
 	srv := httptest.NewServer(r)
@@ -148,7 +144,6 @@ func TestAddItemValidationAndErrors(t *testing.T) {
 		code       string
 	}{
 		{"ok", `{"variantId":1,"quantity":2}`, 200, ""},
-		{"extra price field is ignored", `{"variantId":1,"quantity":2,"price":"0.01"}`, 200, ""},
 		{"snake_case field is not accepted", `{"variant_id":1,"quantity":2}`, 400, "VALIDATION_FAILED"},
 		{"quantity 0", `{"variantId":1,"quantity":0}`, 400, "VALIDATION_FAILED"},
 		{"quantity negative", `{"variantId":1,"quantity":-1}`, 400, "VALIDATION_FAILED"},
@@ -165,6 +160,34 @@ func TestAddItemValidationAndErrors(t *testing.T) {
 	}
 }
 
+func TestAddItemIgnoresClientPrice(t *testing.T) {
+	srv, iss := newServer(t)
+	status, out := do(t, srv, iss, 7, "CUSTOMER", "POST", "/cart/items", `{"variantId":1,"quantity":2,"price":"0.01"}`)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200; response = %v", status, out)
+	}
+
+	items, ok := out["items"].([]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("items = %#v, want one cart item", out["items"])
+	}
+	item, ok := items[0].(map[string]any)
+	if !ok {
+		t.Fatalf("cart item = %#v, want object", items[0])
+	}
+	for field, want := range map[string]string{
+		"unitPrice": "12.50",
+		"lineTotal": "25.00",
+	} {
+		if got := item[field]; got != want {
+			t.Errorf("item[%q] = %#v, want %q from Catalog, not client price 0.01", field, got, want)
+		}
+	}
+	if got := out["subtotal"]; got != "25.00" {
+		t.Errorf("subtotal = %#v, want server-calculated 25.00", got)
+	}
+}
+
 func TestResponseShapeFollowsOpenAPI(t *testing.T) {
 	srv, iss := newServer(t)
 	_, out := do(t, srv, iss, 7, "CUSTOMER", "POST", "/cart/items", `{"variantId":1,"quantity":2}`)
@@ -176,8 +199,8 @@ func TestResponseShapeFollowsOpenAPI(t *testing.T) {
 	if _, leaked := out["CustomerID"]; leaked {
 		t.Error("customer id must not be exposed")
 	}
-	if out["subtotal"] != "0.00" { // stub has no prices; the point is it's a decimal STRING, not a number
-		t.Errorf("subtotal = %#v, want string \"0.00\"", out["subtotal"])
+	if out["subtotal"] != "25.00" { // subtotal is still a decimal STRING, not a number
+		t.Errorf("subtotal = %#v, want string \"25.00\"", out["subtotal"])
 	}
 }
 
@@ -264,4 +287,22 @@ func TestOldTokenWithoutCustomerIDFallsBackToLookup(t *testing.T) {
 	if store.lookups != 1 {
 		t.Errorf("lookups = %d, want 1 (fallback)", store.lookups)
 	}
+}
+
+type stubCatalog struct{}
+
+func (stubCatalog) GetVariantForCart(
+	_ context.Context,
+	variantID int,
+) (*catalogapp.CartVariant, error) {
+	if variantID == 404 {
+		return nil, catalogapp.ErrNotFound
+	}
+
+	return &catalogapp.CartVariant{
+		ID:            variantID,
+		Price:         money.FromCents(1250),
+		StockQuantity: stubStock,
+		Available:     true,
+	}, nil
 }
