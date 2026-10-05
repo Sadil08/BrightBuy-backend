@@ -142,7 +142,7 @@ func main() {
 
 	// 03-cart — third feature module, same bottom-up wiring as above.
 	cartRepo := cartmysql.NewCartRepository(db)
-	cartService := cartapp.NewService(cartRepo)
+	cartService := cartapp.NewService(cartRepo, catalogService)
 	cartHandler := carthttp.NewHandler(cartService)
 
 	r.Route("/api/v1", func(apiRouter chi.Router) {

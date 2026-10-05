@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"brightbuy-backend/internal/cart/domain"
+	catalogapp "brightbuy-backend/internal/catalog/app"
 )
 
 // fakeStore is an in-memory Store: lines[customerID][variantID] = quantity, with cart item ids
@@ -17,8 +18,12 @@ type fakeStore struct {
 	stock  map[int]int
 }
 
-func newFake(stock map[int]int) *fakeStore {
-	return &fakeStore{lines: map[int]map[int]int{}, ids: map[int]map[int]int{}, nextID: 1, stock: stock}
+func newFake() *fakeStore {
+	return &fakeStore{
+		lines:  map[int]map[int]int{},
+		ids:    map[int]map[int]int{},
+		nextID: 1,
+	}
 }
 
 func (f *fakeStore) Get(_ context.Context, c int) (*domain.Cart, error) {
@@ -68,10 +73,16 @@ func (f *fakeStore) VariantStock(_ context.Context, v int) (int, error) {
 }
 func (f *fakeStore) CustomerIDForUser(context.Context, int) (int, error) { return 0, nil }
 
+func newTestService(stock map[int]int) (*Service, *fakeStore) {
+	store := newFake()
+	catalog := fakeCatalog{stock: stock}
+	return NewService(store, catalog), store
+}
+
 var ctx = context.Background()
 
 func TestAddItemSetsQuantityInsteadOfSumming(t *testing.T) {
-	s := NewService(newFake(map[int]int{1: 10}))
+	s, _ := newTestService(map[int]int{1: 10})
 	_, _ = s.AddItem(ctx, 1, 1, 2)
 	cart, err := s.AddItem(ctx, 1, 1, 2)
 	if err != nil || cart.Items[0].Quantity != 2 {
@@ -80,7 +91,7 @@ func TestAddItemSetsQuantityInsteadOfSumming(t *testing.T) {
 }
 
 func TestAddItemRejectsOverStockWithAvailableCount(t *testing.T) {
-	s := NewService(newFake(map[int]int{1: 3}))
+	s, _ := newTestService(map[int]int{1: 3})
 	_, err := s.AddItem(ctx, 1, 1, 4) // AC-CART-2
 	var se *domain.StockExceededError
 	if !errors.As(err, &se) || se.Available != 3 {
@@ -89,15 +100,14 @@ func TestAddItemRejectsOverStockWithAvailableCount(t *testing.T) {
 }
 
 func TestAddItemUnknownVariant(t *testing.T) {
-	s := NewService(newFake(nil))
+	s, _ := newTestService(nil)
 	if _, err := s.AddItem(ctx, 1, 99, 1); !errors.Is(err, domain.ErrVariantNotFound) {
 		t.Fatalf("got %v, want ErrVariantNotFound", err)
 	}
 }
 
 func TestUpdateAndRemoveAreOwnershipScoped(t *testing.T) { // SEC-CART-1
-	f := newFake(map[int]int{1: 10})
-	s := NewService(f)
+	s, f := newTestService(map[int]int{1: 10})
 	a, _ := s.AddItem(ctx, 1, 1, 2)
 	lineID := a.Items[0].ID
 	if _, err := s.UpdateItemQuantity(ctx, 2, lineID, 1); !errors.Is(err, domain.ErrLineNotFound) {
@@ -112,7 +122,7 @@ func TestUpdateAndRemoveAreOwnershipScoped(t *testing.T) { // SEC-CART-1
 }
 
 func TestUpdateQuantityZeroRemovesLine(t *testing.T) {
-	s := NewService(newFake(map[int]int{1: 10}))
+	s, _ := newTestService(map[int]int{1: 10})
 	a, _ := s.AddItem(ctx, 1, 1, 2)
 	cart, err := s.UpdateItemQuantity(ctx, 1, a.Items[0].ID, 0)
 	if err != nil || len(cart.Items) != 0 {
@@ -121,7 +131,7 @@ func TestUpdateQuantityZeroRemovesLine(t *testing.T) {
 }
 
 func TestUpdateRejectsOverStock(t *testing.T) {
-	s := NewService(newFake(map[int]int{1: 3}))
+	s, _ := newTestService(map[int]int{1: 3})
 	a, _ := s.AddItem(ctx, 1, 1, 1)
 	if _, err := s.UpdateItemQuantity(ctx, 1, a.Items[0].ID, 4); err == nil {
 		t.Fatal("want stock error")
@@ -129,7 +139,7 @@ func TestUpdateRejectsOverStock(t *testing.T) {
 }
 
 func TestMergeKeepsHigherQuantityNotSum(t *testing.T) { // AC-CART-4
-	s := NewService(newFake(map[int]int{1: 10, 2: 10}))
+	s, _ := newTestService(map[int]int{1: 10, 2: 10})
 	_, _ = s.AddItem(ctx, 1, 1, 1)                            // server has 1 of V1
 	cart, err := s.Merge(ctx, 1, []LineInput{{1, 2}, {2, 5}}) // guest has 2 of V1, 5 of V2
 	if err != nil {
@@ -145,7 +155,7 @@ func TestMergeKeepsHigherQuantityNotSum(t *testing.T) { // AC-CART-4
 }
 
 func TestMergeKeepsServerQuantityWhenHigher(t *testing.T) {
-	s := NewService(newFake(map[int]int{1: 10}))
+	s, _ := newTestService(map[int]int{1: 10})
 	_, _ = s.AddItem(ctx, 1, 1, 5)
 	cart, _ := s.Merge(ctx, 1, []LineInput{{1, 2}})
 	if cart.Items[0].Quantity != 5 {
@@ -154,7 +164,7 @@ func TestMergeKeepsServerQuantityWhenHigher(t *testing.T) {
 }
 
 func TestMergeSkipsUnknownVariantsAndEmptyIsNoop(t *testing.T) {
-	s := NewService(newFake(map[int]int{1: 10}))
+	s, _ := newTestService(map[int]int{1: 10})
 	_, _ = s.AddItem(ctx, 1, 1, 2)
 	cart, err := s.Merge(ctx, 1, []LineInput{{99, 1}})
 	if err != nil || len(cart.Items) != 1 {
@@ -174,7 +184,7 @@ func TestMoneyMarshalsAsDecimalString(t *testing.T) {
 }
 
 func TestInvalidQuantitiesAreInvalidInputNotInternalErrors(t *testing.T) {
-	s := NewService(newFake(map[int]int{1: 10}))
+	s, _ := newTestService(map[int]int{1: 10})
 	a, _ := s.AddItem(ctx, 1, 1, 1)
 	checks := map[string]error{}
 	_, checks["add 0"] = s.AddItem(ctx, 1, 1, 0)
@@ -187,4 +197,23 @@ func TestInvalidQuantitiesAreInvalidInputNotInternalErrors(t *testing.T) {
 			t.Errorf("%s: got %v, want ErrInvalidInput", name, err)
 		}
 	}
+}
+
+type fakeCatalog struct {
+	stock map[int]int
+}
+
+func (f fakeCatalog) GetVariantForCart(
+	_ context.Context,
+	variantID int,
+) (*catalogapp.CartVariant, error) {
+	stock, ok := f.stock[variantID]
+	if !ok {
+		return nil, catalogapp.ErrNotFound
+	}
+
+	return &catalogapp.CartVariant{
+		ID:            variantID,
+		StockQuantity: stock,
+	}, nil
 }

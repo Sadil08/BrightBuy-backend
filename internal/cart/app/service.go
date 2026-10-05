@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"brightbuy-backend/internal/cart/domain"
+	catalogapp "brightbuy-backend/internal/catalog/app"
 )
 
 // maxMergeItems bounds a guest-cart merge so one request can't trigger unbounded writes.
@@ -19,7 +20,6 @@ type Store interface {
 	FindLine(ctx context.Context, customerID, variantID int) (*domain.CartItem, error)
 	FindLineByID(ctx context.Context, customerID, cartItemID int) (*domain.CartItem, error)
 	DeleteLine(ctx context.Context, customerID, variantID int) error
-	VariantStock(ctx context.Context, variantID int) (int, error)
 	CustomerIDForUser(ctx context.Context, userAccountID int) (int, error)
 }
 
@@ -32,11 +32,18 @@ type LineInput struct {
 
 // Service contains the cart business logic.
 type Service struct {
-	repo Store
+	repo    Store
+	catalog Catalog
 }
 
-func NewService(repo Store) *Service {
-	return &Service{repo: repo}
+// Catalog is the subset of catalog business logic that cart needs. It is a separate port so the
+// cart service can be unit-tested with a fake instead of a real catalog service.
+type Catalog interface {
+	GetVariantForCart(ctx context.Context, variantID int) (*catalogapp.CartVariant, error)
+}
+
+func NewService(repo Store, catalog Catalog) *Service {
+	return &Service{repo: repo, catalog: catalog}
 }
 
 // CustomerIDForUser resolves the authenticated user_account_id to the customer who owns the cart.
@@ -117,8 +124,8 @@ func (s *Service) Merge(ctx context.Context, customerID int, items []LineInput) 
 	}
 
 	for _, in := range items {
-		if _, err := s.repo.VariantStock(ctx, in.VariantID); err != nil {
-			if errors.Is(err, domain.ErrVariantNotFound) {
+		if _, err := s.catalog.GetVariantForCart(ctx, in.VariantID); err != nil {
+			if errors.Is(err, catalogapp.ErrNotFound) {
 				continue
 			}
 			return nil, err
@@ -138,13 +145,23 @@ func (s *Service) Merge(ctx context.Context, customerID int, items []LineInput) 
 	return s.repo.Get(ctx, customerID)
 }
 
-func (s *Service) validateStock(ctx context.Context, variantID, requestedQty int) error {
-	stock, err := s.repo.VariantStock(ctx, variantID)
+func (s *Service) validateStock(
+	ctx context.Context,
+	variantID, requestedQty int,
+) error {
+	variant, err := s.catalog.GetVariantForCart(ctx, variantID)
+	if errors.Is(err, catalogapp.ErrNotFound) {
+		return domain.ErrVariantNotFound
+	}
 	if err != nil {
 		return err
 	}
-	if requestedQty > stock {
-		return &domain.StockExceededError{Requested: requestedQty, Available: stock}
+	if requestedQty > variant.StockQuantity {
+		return &domain.StockExceededError{
+			Requested: requestedQty,
+			Available: variant.StockQuantity,
+		}
 	}
+
 	return nil
 }
