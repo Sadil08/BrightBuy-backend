@@ -7,6 +7,7 @@ import (
 
 	"brightbuy-backend/internal/cart/domain"
 	catalogapp "brightbuy-backend/internal/catalog/app"
+	"brightbuy-backend/internal/shared/money"
 )
 
 // fakeStore is an in-memory Store: lines[customerID][variantID] = quantity, with cart item ids
@@ -15,7 +16,6 @@ type fakeStore struct {
 	lines  map[int]map[int]int
 	ids    map[int]map[int]int // customerID -> variantID -> cartItemID
 	nextID int
-	stock  map[int]int
 }
 
 func newFake() *fakeStore {
@@ -64,13 +64,6 @@ func (f *fakeStore) DeleteLine(_ context.Context, c, v int) error {
 	delete(f.ids[c], v)
 	return nil
 }
-func (f *fakeStore) VariantStock(_ context.Context, v int) (int, error) {
-	s, ok := f.stock[v]
-	if !ok {
-		return 0, domain.ErrVariantNotFound
-	}
-	return s, nil
-}
 func (f *fakeStore) CustomerIDForUser(context.Context, int) (int, error) { return 0, nil }
 
 func newTestService(stock map[int]int) (*Service, *fakeStore) {
@@ -81,12 +74,22 @@ func newTestService(stock map[int]int) (*Service, *fakeStore) {
 
 var ctx = context.Background()
 
-func TestAddItemSetsQuantityInsteadOfSumming(t *testing.T) {
+func TestAddItemAccumulatesQuantityForExistingVariant(t *testing.T) {
 	s, _ := newTestService(map[int]int{1: 10})
 	_, _ = s.AddItem(ctx, 1, 1, 2)
-	cart, err := s.AddItem(ctx, 1, 1, 2)
-	if err != nil || cart.Items[0].Quantity != 2 {
-		t.Fatalf("got %+v, %v; want quantity 2 (set, not 4)", cart, err)
+	cart, err := s.AddItem(ctx, 1, 1, 3)
+	if err != nil || cart.Items[0].Quantity != 5 {
+		t.Fatalf("got %+v, %v; want quantity 5 (2 + 3)", cart, err)
+	}
+}
+
+func TestAddItemRejectsAccumulatedQuantityOverStock(t *testing.T) {
+	s, _ := newTestService(map[int]int{1: 4})
+	if _, err := s.AddItem(ctx, 1, 1, 2); err != nil {
+		t.Fatalf("first AddItem: %v", err)
+	}
+	if _, err := s.AddItem(ctx, 1, 1, 3); err == nil {
+		t.Fatal("want stock error when accumulated quantity exceeds available stock")
 	}
 }
 
@@ -103,6 +106,69 @@ func TestAddItemUnknownVariant(t *testing.T) {
 	s, _ := newTestService(nil)
 	if _, err := s.AddItem(ctx, 1, 99, 1); !errors.Is(err, domain.ErrVariantNotFound) {
 		t.Fatalf("got %v, want ErrVariantNotFound", err)
+	}
+}
+
+func TestGetCartEnrichesItemsAndExcludesUnavailableSubtotal(t *testing.T) {
+	store := newFake()
+	store.lines[1] = map[int]int{1: 2, 2: 1}
+	store.ids[1] = map[int]int{1: 10, 2: 20}
+	catalog := fakeCatalog{variants: map[int]catalogapp.CartVariant{
+		1: {
+			ID: 1, ProductName: "Available product", Price: money.FromCents(1250),
+			StockQuantity: 1, Available: true,
+		},
+		2: {
+			ID: 2, ProductName: "Inactive product", Price: money.FromCents(9900),
+			StockQuantity: 10, Available: false,
+		},
+	}}
+	service := NewService(store, catalog)
+
+	cart, err := service.GetCart(ctx, 1)
+	if err != nil {
+		t.Fatalf("GetCart: %v", err)
+	}
+	if len(cart.Items) != 2 {
+		t.Fatalf("got %d items, want 2", len(cart.Items))
+	}
+
+	items := make(map[int]domain.CartItem, len(cart.Items))
+	for _, item := range cart.Items {
+		items[item.VariantID] = item
+	}
+	available := items[1]
+	if available.ProductName != "Available product" || available.UnitPrice != 1250 {
+		t.Errorf("available item = %+v, want Catalog name and price", available)
+	}
+	if !available.StockWarning {
+		t.Errorf("available item StockWarning = false, want true for quantity 2 with stock 1")
+	}
+	inactive := items[2]
+	if !inactive.Unavailable {
+		t.Errorf("inactive item = %+v, want Unavailable true", inactive)
+	}
+	if cart.Subtotal != 2500 {
+		t.Errorf("Subtotal = %d, want 2500 (excluding unavailable line)", cart.Subtotal)
+	}
+}
+
+func TestInactiveVariantsCannotBeAddedOrMerged(t *testing.T) {
+	catalog := fakeCatalog{variants: map[int]catalogapp.CartVariant{
+		2: {ID: 2, Available: false},
+	}}
+	store := newFake()
+	service := NewService(store, catalog)
+
+	if _, err := service.AddItem(ctx, 1, 2, 1); !errors.Is(err, domain.ErrVariantNotFound) {
+		t.Errorf("AddItem error = %v, want ErrVariantNotFound", err)
+	}
+	cart, err := service.Merge(ctx, 1, []LineInput{{VariantID: 2, Quantity: 1}})
+	if err != nil {
+		t.Fatalf("Merge inactive variant: %v", err)
+	}
+	if len(cart.Items) != 0 {
+		t.Errorf("Merge added inactive variant: items = %+v", cart.Items)
 	}
 }
 
@@ -200,13 +266,17 @@ func TestInvalidQuantitiesAreInvalidInputNotInternalErrors(t *testing.T) {
 }
 
 type fakeCatalog struct {
-	stock map[int]int
+	stock    map[int]int
+	variants map[int]catalogapp.CartVariant
 }
 
 func (f fakeCatalog) GetVariantForCart(
 	_ context.Context,
 	variantID int,
 ) (*catalogapp.CartVariant, error) {
+	if variant, ok := f.variants[variantID]; ok {
+		return &variant, nil
+	}
 	stock, ok := f.stock[variantID]
 	if !ok {
 		return nil, catalogapp.ErrNotFound
@@ -214,6 +284,9 @@ func (f fakeCatalog) GetVariantForCart(
 
 	return &catalogapp.CartVariant{
 		ID:            variantID,
+		ProductName:   "Test product",
+		Price:         money.FromCents(100),
 		StockQuantity: stock,
+		Available:     true,
 	}, nil
 }

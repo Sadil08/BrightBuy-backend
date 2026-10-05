@@ -24,7 +24,7 @@ type Store interface {
 }
 
 // LineInput is one (variant, quantity) pair from the client. There is deliberately no price field:
-// prices are always read from product_variant (SEC-CART-2).
+// current prices are resolved through Catalog (SEC-CART-2).
 type LineInput struct {
 	VariantID int
 	Quantity  int
@@ -52,19 +52,59 @@ func (s *Service) CustomerIDForUser(ctx context.Context, userAccountID int) (int
 }
 
 func (s *Service) GetCart(ctx context.Context, customerID int) (*domain.Cart, error) {
-	return s.repo.Get(ctx, customerID)
+	cart, err := s.repo.Get(ctx, customerID)
+	if err != nil {
+		return nil, err
+	}
+
+	cart.Subtotal = 0
+	for i := range cart.Items {
+		item := &cart.Items[i]
+		variant, err := s.catalog.GetVariantForCart(ctx, item.VariantID)
+		if errors.Is(err, catalogapp.ErrNotFound) {
+			item.Unavailable = true
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("get catalog data for cart variant %d: %w", item.VariantID, err)
+		}
+
+		item.ProductName = variant.ProductName
+		item.UnitPrice = domain.Money(variant.Price.Cents())
+		item.Unavailable = !variant.Available
+		item.StockWarning = variant.Available && item.Quantity > variant.StockQuantity
+		item.LineTotal = item.UnitPrice * domain.Money(item.Quantity)
+		if !item.Unavailable {
+			cart.Subtotal += item.LineTotal
+		}
+	}
+
+	return cart, nil
 }
 
-// AddItem makes the line hold exactly `quantity` — it SETS, it does not add to the existing
-// quantity (plan.md §6: matches PATCH, avoids "add 2, add 2, got 4" surprises).
+// AddItem adds `quantity` to the existing line for the variant, if any. PATCH is used to set an
+// exact quantity.
 func (s *Service) AddItem(ctx context.Context, customerID, variantID, quantity int) (*domain.Cart, error) {
 	if quantity < 1 || quantity > domain.MaxLineQuantity {
 		return nil, fmt.Errorf("%w: quantity must be between 1 and %d", domain.ErrInvalidInput, domain.MaxLineQuantity)
 	}
+	line, err := s.repo.FindLine(ctx, customerID, variantID)
+	if err != nil {
+		return nil, fmt.Errorf("find existing cart line: %w", err)
+	}
+	if line != nil {
+		if line.Quantity > domain.MaxLineQuantity || quantity > domain.MaxLineQuantity-line.Quantity {
+			return nil, fmt.Errorf("%w: cart line quantity cannot exceed %d", domain.ErrInvalidInput, domain.MaxLineQuantity)
+		}
+		quantity += line.Quantity
+	}
 	if err := s.validateStock(ctx, variantID, quantity); err != nil {
 		return nil, err
 	}
-	return s.repo.UpsertLine(ctx, customerID, variantID, quantity)
+	if _, err := s.repo.UpsertLine(ctx, customerID, variantID, quantity); err != nil {
+		return nil, err
+	}
+	return s.GetCart(ctx, customerID)
 }
 
 // UpdateItemQuantity sets the quantity of one of the caller's cart lines. Quantity 0 is the same
@@ -86,7 +126,10 @@ func (s *Service) UpdateItemQuantity(ctx context.Context, customerID, cartItemID
 	if err := s.validateStock(ctx, line.VariantID, quantity); err != nil {
 		return nil, err
 	}
-	return s.repo.UpsertLine(ctx, customerID, line.VariantID, quantity)
+	if _, err := s.repo.UpsertLine(ctx, customerID, line.VariantID, quantity); err != nil {
+		return nil, err
+	}
+	return s.GetCart(ctx, customerID)
 }
 
 // RemoveItem deletes one of the caller's cart lines and returns the remaining cart.
@@ -105,7 +148,7 @@ func (s *Service) removeLine(ctx context.Context, customerID, variantID int) (*d
 	if err := s.repo.DeleteLine(ctx, customerID, variantID); err != nil {
 		return nil, fmt.Errorf("delete cart item: %w", err)
 	}
-	return s.repo.Get(ctx, customerID)
+	return s.GetCart(ctx, customerID)
 }
 
 // Merge folds a guest's browser cart into the customer's server cart on login (FR-CART-5). Where a
@@ -124,11 +167,15 @@ func (s *Service) Merge(ctx context.Context, customerID int, items []LineInput) 
 	}
 
 	for _, in := range items {
-		if _, err := s.catalog.GetVariantForCart(ctx, in.VariantID); err != nil {
+		variant, err := s.catalog.GetVariantForCart(ctx, in.VariantID)
+		if err != nil {
 			if errors.Is(err, catalogapp.ErrNotFound) {
 				continue
 			}
 			return nil, err
+		}
+		if !variant.Available {
+			continue
 		}
 		existing, err := s.repo.FindLine(ctx, customerID, in.VariantID)
 		if err != nil {
@@ -142,7 +189,7 @@ func (s *Service) Merge(ctx context.Context, customerID int, items []LineInput) 
 			return nil, err
 		}
 	}
-	return s.repo.Get(ctx, customerID)
+	return s.GetCart(ctx, customerID)
 }
 
 func (s *Service) validateStock(
@@ -155,6 +202,9 @@ func (s *Service) validateStock(
 	}
 	if err != nil {
 		return err
+	}
+	if !variant.Available {
+		return domain.ErrVariantNotFound
 	}
 	if requestedQty > variant.StockQuantity {
 		return &domain.StockExceededError{
