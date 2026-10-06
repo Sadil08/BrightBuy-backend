@@ -19,7 +19,7 @@ services:
       # dev laptop used for coursework) would otherwise collide on the default port. Other
       # services in this compose file reach this one at `mysql:3306` over the Docker network
       # regardless — this mapping only matters for connecting a GUI client from the host.
-      - "3308:3306"
+      - "3307:3306"
     volumes:
       - mysql-data:/var/lib/mysql
     healthcheck:
@@ -27,7 +27,14 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-    command: --log-bin-trust-function-creators=1
+    # --default-time-zone=+00:00: pins this server's session/global time zone to UTC explicitly.
+    # product.updated_at/product_variant.updated_at both use CURRENT_TIMESTAMP (MySQL's "automatic
+    # default/on-update" behavior only recognizes that function, not UTC_TIMESTAMP() — see
+    # db/migrations/0003_product_variant_updated_at.up.sql's comment for how that was found), and
+    # CURRENT_TIMESTAMP runs in whatever time zone the SERVER is configured with. Without this flag,
+    # "is updated_at actually UTC" would just be an accident of whatever time zone the host machine
+    # or container image defaults to — this makes it true by configuration instead.
+    command: --log-bin-trust-function-creators=1 --default-time-zone=+00:00
 
   minio:
     image: quay.io/minio/minio:RELEASE.2025-07-23T15-54-02Z

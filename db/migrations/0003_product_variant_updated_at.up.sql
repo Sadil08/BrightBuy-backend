@@ -1,0 +1,21 @@
+-- Adds updated_at to product_variant, matching the column product already has. Needed for the
+-- product detail endpoint's weak ETag (plan.md §1, httpapi/handler.go's setCacheHeaders/ETag):
+-- without this, a price or stock_quantity change on a variant would leave product.updated_at
+-- untouched (they're separate tables with no trigger linking them), so an ETag derived only from
+-- product.updated_at could keep validating a response as "unchanged" even after its stock status
+-- flipped. The repository takes MAX(product.updated_at, MAX(variant.updated_at)) across all of a
+-- product's variants, so either kind of change actually invalidates the cached response.
+--
+-- CURRENT_TIMESTAMP, not UTC_TIMESTAMP(): MySQL's "automatic default/on-update" column behavior
+-- only recognizes CURRENT_TIMESTAMP and its direct synonyms (NOW(), LOCALTIME, LOCALTIMESTAMP) —
+-- UTC_TIMESTAMP() is flatly rejected here with a syntax error (confirmed directly: ALTER TABLE with
+-- it fails outright). 0001_catalog_schema.up.sql's `product.updated_at` ALSO specifies
+-- UTC_TIMESTAMP() — but CREATE TABLE's parser is more lenient than ALTER TABLE's and silently
+-- rewrites it to CURRENT_TIMESTAMP in the stored schema (`SHOW CREATE TABLE product` proves this).
+-- CURRENT_TIMESTAMP runs in the server's SESSION TIME ZONE, not UTC — so product.updated_at has
+-- never actually been guaranteed UTC, only "whatever time zone this MySQL server happens to be
+-- configured with." See docker-compose.yml's mysql service, which now pins that explicitly to UTC
+-- (--default-time-zone=+00:00), which is what makes CURRENT_TIMESTAMP actually mean UTC here, rather
+-- than relying on a container image's default happening to agree.
+ALTER TABLE product_variant
+    ADD COLUMN updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP;
