@@ -19,7 +19,7 @@ services:
       # dev laptop used for coursework) would otherwise collide on the default port. Other
       # services in this compose file reach this one at `mysql:3306` over the Docker network
       # regardless — this mapping only matters for connecting a GUI client from the host.
-      - "3307:3306"
+      - "3308:3306"
     volumes:
       - mysql-data:/var/lib/mysql
     healthcheck:

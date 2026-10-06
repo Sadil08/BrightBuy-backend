@@ -28,7 +28,7 @@ func TestService_AddItem_RejectsOverStock(t *testing.T) {
 	repo := mysql.NewCartRepository(db)
 	svc := NewService(repo)
 
-	_, err = svc.AddItem(ctx, 1, 42, 9999)
+	_, err = svc.AddItem(ctx, 1, 42, 1000)
 	if err == nil {
 		t.Fatal("expected stock validation error, got nil")
 	}
