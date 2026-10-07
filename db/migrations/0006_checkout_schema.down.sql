@@ -1,0 +1,8 @@
+DROP TABLE IF EXISTS payment;
+DROP TABLE IF EXISTS order_status_history;
+DROP TABLE IF EXISTS stock_movement;
+DROP TABLE IF EXISTS delivery;
+DROP TABLE IF EXISTS order_item;
+DROP TABLE IF EXISTS `order`;
+DROP TABLE IF EXISTS app_config;
+DROP TABLE IF EXISTS city;

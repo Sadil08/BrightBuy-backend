@@ -1,7 +1,5 @@
 DROP FUNCTION IF EXISTS fn_is_variant_in_stock;
 
-DELIMITER $$
-
 CREATE FUNCTION fn_is_variant_in_stock(p_variant_id INT)
 RETURNS BOOLEAN
 DETERMINISTIC
@@ -15,9 +13,7 @@ BEGIN
         ),
         FALSE
     );
-END$$
-
-DELIMITER ;
+END;
 
 /*This SQL code creates a database function called fn_is_variant_in_stock
  that checks whether a specific product variant has stock available. It takes

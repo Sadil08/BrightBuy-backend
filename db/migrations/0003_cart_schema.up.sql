@@ -1,3 +1,7 @@
+CREATE TABLE customer (
+    customer_id INT AUTO_INCREMENT PRIMARY KEY
+) ENGINE=InnoDB;
+
 CREATE TABLE cart(
     cart_id INT AUTO_INCREMENT PRIMARY KEY,
     customer_id INT NOT NULL,
