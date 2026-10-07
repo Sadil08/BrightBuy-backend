@@ -257,6 +257,22 @@ func (r *CartRepository) DeleteLine(
 	return nil
 }
 
+func (r *CartRepository) ClearItemsInTx(ctx context.Context, tx *sql.Tx, customerID int) error {
+	if tx == nil || customerID <= 0 {
+		return fmt.Errorf("invalid cart clear transaction or customer ID")
+	}
+	_, err := tx.ExecContext(ctx, `
+		DELETE ci
+		FROM cart_item ci
+		JOIN cart c ON c.cart_id = ci.cart_id
+		WHERE c.customer_id = ?
+	`, customerID)
+	if err != nil {
+		return fmt.Errorf("clear cart items: %w", err)
+	}
+	return nil
+}
+
 func decimalToMoney(value string) (domain.Money, error) {
 	whole, fraction, hasFraction := strings.Cut(value, ".")
 

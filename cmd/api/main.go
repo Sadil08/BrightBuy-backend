@@ -24,6 +24,13 @@ import (
 	cartapp "brightbuy-backend/internal/cart/app"
 	carthttp "brightbuy-backend/internal/cart/httpapi"
 	cartmysql "brightbuy-backend/internal/cart/mysql"
+	identityapp "brightbuy-backend/internal/identity/app"
+	identityhttp "brightbuy-backend/internal/identity/httpapi"
+	identitymysql "brightbuy-backend/internal/identity/mysql"
+	orderapp "brightbuy-backend/internal/ordering/app"
+	orderhttp "brightbuy-backend/internal/ordering/httpapi"
+	ordermysql "brightbuy-backend/internal/ordering/mysql"
+	"brightbuy-backend/internal/payment"
 
 	"brightbuy-backend/internal/shared/config"
 	"brightbuy-backend/internal/shared/dbx"
@@ -89,7 +96,27 @@ func main() {
 	cartRepo := cartmysql.NewCartRepository(db)     // SQL layer: needs the DB connection
 	cartService := cartapp.NewService(cartRepo)     // business rules: needs the repository
 	cartHandler := carthttp.NewHandler(cartService) // HTTP layer: needs the service
-	carthttp.RegisterRoutes(r, cartHandler)         // attaches GET/POST/PATCH/DELETE /cart... to the router
+
+	signingKey := []byte(cfg.JWTSigningKey)
+	identityRepo := identitymysql.NewUserRepository(db)
+	identityService := identityapp.NewService(identityRepo)
+	identityHandler := identityhttp.NewHandler(identityService, signingKey, cfg.Env != "local")
+
+	orderRepo := ordermysql.NewOrderRepository(db)
+	checkoutService := orderapp.NewCheckoutService(
+		cartService,
+		orderRepo,
+		payment.StubProcessor{},
+		func(ctx context.Context, fn func(*sql.Tx) error) error {
+			return dbx.WithTx(ctx, db, fn)
+		},
+	)
+	orderHandler := orderhttp.NewHandler(checkoutService)
+	r.Route("/api/v1", func(api chi.Router) {
+		carthttp.RegisterRoutes(api, cartHandler, signingKey)
+		identityhttp.RegisterRoutes(api, identityHandler)
+		orderhttp.RegisterRoutes(api, orderHandler, signingKey)
+	})
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,

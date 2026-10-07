@@ -1,16 +1,10 @@
-// NOTE:
-// This cart implementation currently accepts customer_id from the request for local
-// development convenience. Once the auth feature is implemented, this must be
-// replaced with the authenticated customer from the request context or JWT/session.
-// Cart ownership must always be tied to the logged-in user and never to untrusted
-// // client input.
-
 package app
 
 import (
 	"brightbuy-backend/internal/cart/domain"
 	"brightbuy-backend/internal/cart/mysql"
 	"context"
+	"database/sql"
 	"fmt"
 )
 
@@ -30,6 +24,13 @@ func (s *Service) GetCart(ctx context.Context, customerID int) (*domain.Cart, er
 	}
 
 	return s.repo.Get(ctx, customerID)
+}
+
+func (s *Service) ClearItemsInTx(ctx context.Context, tx *sql.Tx, customerID int) error {
+	if customerID <= 0 {
+		return fmt.Errorf("customer ID must be positive")
+	}
+	return s.repo.ClearItemsInTx(ctx, tx, customerID)
 }
 
 func (s *Service) AddItem(
