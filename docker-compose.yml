@@ -51,7 +51,7 @@ services:
       APP_ENV: "local"
       DB_DSN: "${DB_APP_USER:-brightbuy_app}:${DB_APP_PASSWORD:-devapppass}@tcp(mysql:3306)/brightbuy?parseTime=true"
       S3_ENDPOINT_URL: "http://minio:9000"
-      JWT_SIGNING_KEY: ${JWT_SIGNING_KEY:-dev-only-signing-key-change-me}
+      JWT_SIGNING_KEY: ${JWT_SIGNING_KEY:-dev-only-signing-key-change-me-32chars}
     ports:
       - "8080:8080"
     networks:

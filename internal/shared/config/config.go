@@ -39,6 +39,10 @@ func Load() (*Config, error) {
 	if cfg.DatabaseDSN == "" {
 		return nil, fmt.Errorf("DB_DSN environment variable is required")
 	}
+	// JWT signing key must be at least 32 bytes long for security reasons
+	if len(cfg.JWTSigningKey) < 32 {
+		return nil, fmt.Errorf("JWT_SIGNING_KEY must contain at least 32 bytes")
+	}
 
 	return cfg, nil
 }
