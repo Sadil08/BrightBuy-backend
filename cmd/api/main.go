@@ -21,6 +21,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	catalogapp "brightbuy-backend/internal/catalog/app"
+	cataloghttp "brightbuy-backend/internal/catalog/httpapi"
+	catalogmysql "brightbuy-backend/internal/catalog/mysql"
 	"brightbuy-backend/internal/shared/config"
 	"brightbuy-backend/internal/shared/dbx"
 	"brightbuy-backend/internal/shared/logging"
@@ -75,10 +78,19 @@ func main() {
 	r.Get("/healthz", handleLiveness)
 	r.Get("/readyz", handleReadiness(db))
 
-	// Feature routes get registered here, one line per feature, as each one is built:
-	//   catalogHandler := catalogHttp.NewHandler(catalogService)
-	//   catalogHttp.RegisterRoutes(r, catalogHandler)
-	// Nothing exists yet — 01-catalog is next.
+	catalogRepository := catalogmysql.NewRepository(db)
+	catalogService := catalogapp.NewCatalogAdminService(catalogRepository, nil)
+	cataloghttp.RegisterAdminRoutes(r, cataloghttp.NewAdminHandler(catalogService))
+	if cfg.S3EndpointURL != "" {
+		imageStorage, err := catalogmysql.NewImageStorage(cfg.S3EndpointURL, cfg.S3AccessKey, cfg.S3SecretKey, cfg.S3Bucket)
+		if err != nil {
+			logger.Error("image storage setup failed", "error", err)
+			os.Exit(1)
+		}
+		imageRepository := catalogmysql.NewImageRepository(db)
+		imageService := catalogapp.NewImageService(imageStorage, imageRepository)
+		cataloghttp.RegisterImageRoutes(r, cataloghttp.NewImageHandler(imageService))
+	}
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,

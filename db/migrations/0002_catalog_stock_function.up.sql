@@ -1,23 +1,17 @@
 DROP FUNCTION IF EXISTS fn_is_variant_in_stock;
 
-DELIMITER $$
-
 CREATE FUNCTION fn_is_variant_in_stock(p_variant_id INT)
 RETURNS BOOLEAN
 DETERMINISTIC
 READS SQL DATA
-BEGIN
-    RETURN COALESCE(
-        (
-            SELECT stock_quantity > 0
-            FROM product_variant
-            WHERE variant_id = p_variant_id
-        ),
-        FALSE
-    );
-END$$
-
-DELIMITER ;
+RETURN COALESCE(
+    (
+        SELECT stock_quantity > 0
+        FROM product_variant
+        WHERE variant_id = p_variant_id
+    ),
+    FALSE
+);
 
 /*This SQL code creates a database function called fn_is_variant_in_stock
  that checks whether a specific product variant has stock available. It takes
