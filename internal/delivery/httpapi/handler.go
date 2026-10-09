@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -14,6 +15,8 @@ import (
 )
 
 type Service interface {
+	ListCities(ctx context.Context) ([]domain.City, error)
+
 	Preview(
 		ctx context.Context,
 		mode domain.DeliveryMode,
@@ -49,6 +52,28 @@ type estimateResponse struct {
 
 func RegisterRoutes(r chi.Router, handler *Handler) {
 	r.Post("/api/v1/delivery/estimate", handler.Preview)
+	r.Get("/api/v1/cities", handler.ListCities)
+}
+
+type cityResponse struct {
+	CityID int    `json:"cityId"`
+	Name   string `json:"name"`
+}
+
+// ListCities handles GET /api/v1/cities — public reference data for the checkout city picker.
+func (h *Handler) ListCities(w http.ResponseWriter, r *http.Request) {
+	cities, err := h.service.ListCities(r.Context())
+	if err != nil {
+		slog.ErrorContext(r.Context(), "list cities failed", "error", err)
+		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "unable to list cities")
+		return
+	}
+
+	out := make([]cityResponse, 0, len(cities))
+	for _, c := range cities {
+		out = append(out, cityResponse{CityID: c.ID, Name: c.Name})
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 func (h *Handler) Preview(w http.ResponseWriter, r *http.Request) {

@@ -41,3 +41,22 @@ func (r *Repository) EstimateDays(
 
 	return days, nil
 }
+
+// ListCities returns every city, alphabetically — the choices a customer sees at checkout.
+func (r *Repository) ListCities(ctx context.Context) ([]domain.City, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT city_id, name FROM city ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	cities := make([]domain.City, 0)
+	for rows.Next() {
+		var c domain.City
+		if err := rows.Scan(&c.ID, &c.Name); err != nil {
+			return nil, err
+		}
+		cities = append(cities, c)
+	}
+	return cities, rows.Err()
+}

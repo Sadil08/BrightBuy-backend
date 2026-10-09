@@ -39,7 +39,7 @@ func TestMain(m *testing.M) {
 func preview(t *testing.T, body string) (int, map[string]any) {
 	t.Helper()
 	router := chi.NewRouter()
-	httpapi.RegisterRoutes(router, httpapi.NewHandler(app.NewService(NewRepository(testDB), time.Now)))
+	httpapi.RegisterRoutes(router, httpapi.NewHandler(app.NewService(NewRepository(testDB), NewRepository(testDB), time.Now)))
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/delivery/estimate", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -161,6 +161,37 @@ func TestInvalidRequestsAreRejected(t *testing.T) {
 	} {
 		if code, _ := preview(t, body); code != http.StatusBadRequest {
 			t.Errorf("%s: got %d, want 400", name, code)
+		}
+	}
+}
+
+func TestListCitiesIsAlphabeticalAndHidesClassification(t *testing.T) {
+	testdb.City(t, testDB, "Zzz Town", "Other")
+	testdb.City(t, testDB, "Aaa Town", "Main")
+
+	router := chi.NewRouter()
+	httpapi.RegisterRoutes(router, httpapi.NewHandler(app.NewService(NewRepository(testDB), NewRepository(testDB), time.Now)))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/cities", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	var cities []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &cities); err != nil {
+		t.Fatal(err)
+	}
+	if len(cities) < 8 { // 6 seeded by migration 0010 + the two above
+		t.Fatalf("got %d cities, want at least 8 (seed + fixtures)", len(cities))
+	}
+	prev := ""
+	for _, c := range cities {
+		name := strings.ToLower(c["name"].(string)) // the column's collation sorts case-insensitively
+		if name < prev {
+			t.Fatalf("not alphabetical: %q after %q", name, prev)
+		}
+		prev = name
+		if _, leaked := c["classification"]; leaked {
+			t.Fatal("classification must not be exposed")
 		}
 	}
 }

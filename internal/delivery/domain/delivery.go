@@ -23,3 +23,10 @@ type Estimate struct {
 	EstimatedDays int
 	EstimatedDate time.Time
 }
+
+// City is a delivery destination a customer can pick at checkout. Classification (Main/Other) is
+// deliberately NOT exposed: it only drives the day count, which the estimate endpoint returns.
+type City struct {
+	ID   int
+	Name string
+}

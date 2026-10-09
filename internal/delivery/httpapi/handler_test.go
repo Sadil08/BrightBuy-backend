@@ -17,6 +17,11 @@ import (
 type fakeDeliveryService struct {
 	estimate domain.Estimate
 	err      error
+	cities   []domain.City
+}
+
+func (f fakeDeliveryService) ListCities(context.Context) ([]domain.City, error) {
+	return f.cities, f.err
 }
 
 func (f fakeDeliveryService) Preview(
@@ -186,3 +191,35 @@ correct response. The valid tests check Standard Delivery and Store Pickup, whil
 that malformed JSON, unknown fields, missing city, and invalid quantities return 400 Bad Request. Another
 test verifies that a service/database failure returns 500 Internal Server Error, and assertEstimateResponse()
 checks that the successful response contains valid mode, estimatedDate, and estimatedDays fields.*/
+
+func TestListCitiesReturnsIDAndNameOnly(t *testing.T) {
+	handler := NewHandler(fakeDeliveryService{cities: []domain.City{{ID: 2, Name: "Austin"}, {ID: 1, Name: "Dallas"}}})
+	rec := httptest.NewRecorder()
+	handler.ListCities(rec, httptest.NewRequest(http.MethodGet, "/api/v1/cities", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	want := `[{"cityId":2,"name":"Austin"},{"cityId":1,"name":"Dallas"}]`
+	if got := strings.TrimSpace(rec.Body.String()); got != want {
+		t.Fatalf("body %s, want %s", got, want)
+	}
+}
+
+func TestListCitiesEmptyIsAnEmptyArrayNotNull(t *testing.T) {
+	handler := NewHandler(fakeDeliveryService{})
+	rec := httptest.NewRecorder()
+	handler.ListCities(rec, httptest.NewRequest(http.MethodGet, "/api/v1/cities", nil))
+	if got := strings.TrimSpace(rec.Body.String()); got != "[]" {
+		t.Fatalf("body %s, want []", got)
+	}
+}
+
+func TestListCitiesServiceErrorIs500(t *testing.T) {
+	handler := NewHandler(fakeDeliveryService{err: context.DeadlineExceeded})
+	rec := httptest.NewRecorder()
+	handler.ListCities(rec, httptest.NewRequest(http.MethodGet, "/api/v1/cities", nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status %d, want 500", rec.Code)
+	}
+}

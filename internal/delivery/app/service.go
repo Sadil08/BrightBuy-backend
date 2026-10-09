@@ -25,22 +25,35 @@ type Estimator interface {
 	) (int, error)
 }
 
+// CityLister reads the delivery destinations. A separate port from Estimator (interface
+// segregation): previewing an estimate and listing cities change for different reasons.
+type CityLister interface {
+	ListCities(ctx context.Context) ([]domain.City, error)
+}
+
 type Clock func() time.Time
 
 type Service struct {
 	estimator Estimator
+	cities    CityLister
 	now       Clock
 }
 
-func NewService(estimator Estimator, now Clock) *Service {
+func NewService(estimator Estimator, cities CityLister, now Clock) *Service {
 	if now == nil {
 		now = time.Now
 	}
 
 	return &Service{
 		estimator: estimator,
+		cities:    cities,
 		now:       now,
 	}
+}
+
+// ListCities returns the delivery destinations for the checkout city picker.
+func (s *Service) ListCities(ctx context.Context) ([]domain.City, error) {
+	return s.cities.ListCities(ctx)
 }
 
 func (s *Service) Preview(

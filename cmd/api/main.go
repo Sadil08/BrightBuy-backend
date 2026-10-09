@@ -179,7 +179,7 @@ func main() {
 	})
 
 	deliveryRepository := deliverymysql.NewRepository(db)
-	deliveryService := deliveryapp.NewService(deliveryRepository, time.Now)
+	deliveryService := deliveryapp.NewService(deliveryRepository, deliveryRepository, time.Now)
 	deliveryHandler := deliveryhttp.NewHandler(deliveryService)
 
 	deliveryhttp.RegisterRoutes(r, deliveryHandler)

@@ -36,7 +36,7 @@ func TestPreview(t *testing.T) {
 		return time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	}
 
-	service := NewService(estimator, fixedNow)
+	service := NewService(estimator, nil, fixedNow)
 
 	cityID := 1
 	result, err := service.Preview(
@@ -84,7 +84,7 @@ func TestPreview(t *testing.T) {
 
 func TestPreviewStorePickupIgnoresCity(t *testing.T) {
 	estimator := &fakeEstimator{days: 0}
-	service := NewService(estimator, time.Now)
+	service := NewService(estimator, nil, time.Now)
 
 	cityID := 1
 
@@ -107,7 +107,7 @@ func TestPreviewStorePickupIgnoresCity(t *testing.T) {
 
 func TestPreviewRequiresCityForStandardDelivery(t *testing.T) {
 	estimator := &fakeEstimator{days: 5}
-	service := NewService(estimator, time.Now)
+	service := NewService(estimator, nil, time.Now)
 
 	_, err := service.Preview(
 		context.Background(),
