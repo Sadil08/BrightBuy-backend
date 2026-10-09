@@ -9,6 +9,11 @@ import (
 	"brightbuy-backend/internal/delivery/domain"
 )
 
+// maxItems bounds one preview: the endpoint is public, so an unbounded items array would let any
+// anonymous caller make the database expand an arbitrarily large JSON_TABLE. Matches the cart's
+// own 100-line merge limit.
+const maxItems = 100
+
 var ErrInvalidRequest = errors.New("invalid delivery estimate request")
 
 type Estimator interface {
@@ -54,6 +59,10 @@ func (s *Service) Preview(
 
 	if mode == domain.StorePickup {
 		cityID = nil
+	}
+
+	if len(items) > maxItems {
+		return domain.Estimate{}, ErrInvalidRequest
 	}
 
 	for _, item := range items {

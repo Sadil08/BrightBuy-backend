@@ -42,6 +42,10 @@ import (
 	ordermysql "brightbuy-backend/internal/ordering/mysql"
 	"brightbuy-backend/internal/payment"
 
+	inventoryapp "brightbuy-backend/internal/inventory/app"
+	inventoryhttp "brightbuy-backend/internal/inventory/httpapi"
+	inventorymysql "brightbuy-backend/internal/inventory/mysql"
+
 	deliveryapp "brightbuy-backend/internal/delivery/app"
 	deliveryhttp "brightbuy-backend/internal/delivery/httpapi"
 	deliverymysql "brightbuy-backend/internal/delivery/mysql"
@@ -179,6 +183,24 @@ func main() {
 	deliveryHandler := deliveryhttp.NewHandler(deliveryService)
 
 	deliveryhttp.RegisterRoutes(r, deliveryHandler)
+
+	// 06-inventory-stock — staff-only. Authenticate runs first (a missing/invalid session is a 401);
+	// RequirePermission alone would answer 403 for an unauthenticated caller. The permission is a
+	// code ("stock:adjust"), granted to WAREHOUSE_STAFF by migration 0004 — never a role name here
+	// (SEC-INVENTORY-1). The acting user recorded in stock_movement comes from the verified JWT.
+	inventoryRepository := inventorymysql.NewRepository(db)
+	inventoryService := inventoryapp.NewService(inventoryRepository)
+	inventoryHandler := inventoryhttp.NewHandler(inventoryService, func(ctx context.Context) (int, bool) {
+		claims := auth.ClaimsFromContext(ctx)
+		if claims == nil {
+			return 0, false
+		}
+		return claims.UserID, true
+	})
+	requireStockAdjust := func(next http.Handler) http.Handler {
+		return auth.Authenticate(tokenIssuer)(auth.RequirePermission("stock:adjust")(next))
+	}
+	inventoryhttp.RegisterRoutes(r, inventoryHandler, requireStockAdjust)
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,

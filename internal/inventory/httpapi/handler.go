@@ -200,6 +200,7 @@ func (h *Handler) Adjust(w http.ResponseWriter, r *http.Request) {
 
 	var request adjustmentRequest
 
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<16) // a {delta, reason} body is tiny
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 

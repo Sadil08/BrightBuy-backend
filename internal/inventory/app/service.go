@@ -8,6 +8,14 @@ import (
 	"brightbuy-backend/internal/inventory/domain"
 )
 
+const (
+	// MaxAdjustment bounds one adjustment's size so a typo (or hostile input) can't overflow the INT
+	// stock column inside sp_adjust_stock and surface as a 500.
+	MaxAdjustment = 1_000_000
+	// maxQueryLength bounds the search text; SKUs and product names are far shorter than this.
+	maxQueryLength = 100
+)
+
 var (
 	ErrInvalidRequest      = errors.New("invalid inventory request")
 	ErrAdjustmentBelowZero = errors.New("adjustment would take stock below zero")
@@ -47,13 +55,14 @@ func (s *Service) Search(
 	page int,
 	size int,
 ) ([]domain.VariantStock, int, error) {
-	if page < 1 || size < 1 || size > 100 {
+	query = strings.TrimSpace(query)
+	if page < 1 || size < 1 || size > 100 || len(query) > maxQueryLength {
 		return nil, 0, ErrInvalidRequest
 	}
 
 	return s.repository.Search(
 		ctx,
-		strings.TrimSpace(query),
+		query,
 		page,
 		size,
 	)
@@ -71,7 +80,9 @@ func (s *Service) Adjust(
 	if actingUserID <= 0 ||
 		variantID <= 0 ||
 		reason == "" ||
-		len(reason) > 255 {
+		len(reason) > 255 ||
+		delta > MaxAdjustment ||
+		delta < -MaxAdjustment {
 		return ErrInvalidRequest
 	}
 

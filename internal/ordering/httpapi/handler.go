@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -88,6 +89,7 @@ func (h *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, app.ErrInvalidRequest):
 			httpx.WriteError(w, http.StatusBadRequest, "VALIDATION_ERROR", "checkout request is invalid")
 		default:
+			slog.ErrorContext(r.Context(), "checkout failed", "error", err)
 			httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "checkout failed")
 		}
 		return
@@ -103,6 +105,7 @@ func (h *Handler) ListOrders(w http.ResponseWriter, r *http.Request) {
 	page, size := positiveQueryInt(r, "page", 1), positiveQueryInt(r, "size", 20)
 	orders, total, err := h.service.ListOrders(r.Context(), customerID, page, size)
 	if err != nil {
+		slog.ErrorContext(r.Context(), "list orders failed", "error", err)
 		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not list orders")
 		return
 	}
@@ -127,6 +130,7 @@ func (h *Handler) GetOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		slog.ErrorContext(r.Context(), "get order failed", "error", err)
 		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not retrieve order")
 		return
 	}

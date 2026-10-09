@@ -54,6 +54,7 @@ func RegisterRoutes(r chi.Router, handler *Handler) {
 func (h *Handler) Preview(w http.ResponseWriter, r *http.Request) {
 	var request estimateRequest
 
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<18) // public endpoint: cap the body (100 items ~ 5 KB)
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 
