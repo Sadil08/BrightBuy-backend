@@ -1,0 +1,115 @@
+package app
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"time"
+
+	"brightbuy-backend/internal/delivery/domain"
+)
+
+// maxItems bounds one preview: the endpoint is public, so an unbounded items array would let any
+// anonymous caller make the database expand an arbitrarily large JSON_TABLE. Matches the cart's
+// own 100-line merge limit.
+const maxItems = 100
+
+var ErrInvalidRequest = errors.New("invalid delivery estimate request")
+
+type Estimator interface {
+	EstimateDays(
+		ctx context.Context,
+		mode domain.DeliveryMode,
+		cityID *int,
+		itemsJSON []byte,
+	) (int, error)
+}
+
+// CityLister reads the delivery destinations. A separate port from Estimator (interface
+// segregation): previewing an estimate and listing cities change for different reasons.
+type CityLister interface {
+	ListCities(ctx context.Context) ([]domain.City, error)
+}
+
+type Clock func() time.Time
+
+type Service struct {
+	estimator Estimator
+	cities    CityLister
+	now       Clock
+}
+
+func NewService(estimator Estimator, cities CityLister, now Clock) *Service {
+	if now == nil {
+		now = time.Now
+	}
+
+	return &Service{
+		estimator: estimator,
+		cities:    cities,
+		now:       now,
+	}
+}
+
+// ListCities returns the delivery destinations for the checkout city picker.
+func (s *Service) ListCities(ctx context.Context) ([]domain.City, error) {
+	return s.cities.ListCities(ctx)
+}
+
+func (s *Service) Preview(
+	ctx context.Context,
+	mode domain.DeliveryMode,
+	cityID *int,
+	items []domain.LineInput,
+) (domain.Estimate, error) {
+	if !mode.Valid() {
+		return domain.Estimate{}, ErrInvalidRequest
+	}
+
+	if mode == domain.StandardDelivery && cityID == nil {
+		return domain.Estimate{}, ErrInvalidRequest
+	}
+
+	if mode == domain.StorePickup {
+		cityID = nil
+	}
+
+	if len(items) > maxItems {
+		return domain.Estimate{}, ErrInvalidRequest
+	}
+
+	for _, item := range items {
+		if item.VariantID <= 0 || item.Quantity <= 0 {
+			return domain.Estimate{}, ErrInvalidRequest
+		}
+	}
+
+	itemsJSON, err := json.Marshal(items)
+	if err != nil {
+		return domain.Estimate{}, err
+	}
+
+	days, err := s.estimator.EstimateDays(
+		ctx,
+		mode,
+		cityID,
+		itemsJSON,
+	)
+	if err != nil {
+		return domain.Estimate{}, err
+	}
+
+	now := s.now().UTC()
+
+	return domain.Estimate{
+		Mode:          mode,
+		EstimatedDays: days,
+		EstimatedDate: now.AddDate(0, 0, days),
+	}, nil
+}
+
+/*I'm implementing a public POST /delivery/estimate preview API that takes
+the customer's delivery mode, city, and cart items, calls the same
+fn_estimate_delivery_days database function used by checkout, and returns
+ the estimated number of calendar days and delivery date before the customer
+ places the order.*/

@@ -313,7 +313,7 @@ func createIntegrationCustomer(t *testing.T, db *sql.DB, email string) int {
 	if err != nil {
 		t.Fatalf("get integration account ID: %v", err)
 	}
-	result, err = db.Exec(`INSERT INTO customer (user_account_id, name) VALUES (?, 'Integration Customer')`, userID)
+	result, err = db.Exec(`INSERT INTO customer (user_account_id, name, phone) VALUES (?, 'Integration Customer', '0770000000')`, userID)
 	if err != nil {
 		t.Fatalf("insert integration customer: %v", err)
 	}

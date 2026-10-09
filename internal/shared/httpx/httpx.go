@@ -37,3 +37,24 @@ func WriteJSON(w http.ResponseWriter, status int, v any) {
 func WriteError(w http.ResponseWriter, status int, code, message string) {
 	WriteJSON(w, status, ErrorResponse{Code: code, Message: message})
 }
+
+// CheckETag sets the ETag response header to etag, then checks whether the client already has this
+// exact version cached (via its own If-None-Match request header, which a browser/HTTP cache sets
+// automatically once it's seen this ETag before). If they match, it writes 304 Not Modified (with no
+// body at all — that's the entire bandwidth-saving point of an ETag) and returns true, telling the
+// caller to stop immediately rather than build and send the full response again for data the client
+// already has. Returns false if the caller should proceed to write the normal 200 response as usual
+// (the ETag header is already set either way, so a fresh client still gets one to cache for next time).
+//
+// etag should already be wrapped in quotes per RFC 9110 (e.g. `"abc123"` or the weak form
+// `W/"abc123"` — see specs/global/07... no single global rule names the format, so each caller
+// decides weak vs strong for its own data; catalog's product detail uses weak, since it's derived
+// from a timestamp, not a byte-exact hash of the response body).
+func CheckETag(w http.ResponseWriter, r *http.Request, etag string) (notModified bool) {
+	w.Header().Set("ETag", etag)
+	if r.Header.Get("If-None-Match") == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return true
+	}
+	return false
+}

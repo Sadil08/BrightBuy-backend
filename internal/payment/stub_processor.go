@@ -32,3 +32,8 @@ func (StubProcessor) Authorize(ctx context.Context, amountCents int64, cardToken
 		LastFour:          "4242",
 	}, nil
 }
+
+// Void is a no-op: the stub never held any real funds.
+func (StubProcessor) Void(ctx context.Context, providerReference string) error {
+	return ctx.Err()
+}

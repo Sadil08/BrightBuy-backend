@@ -134,13 +134,83 @@ VALUES
 (37, 37, 'BULB-PACK', 39.99, 21, TRUE),
 (38, 38, 'ROBOT-KIT', 89.99, 4, TRUE),
 (39, 39, 'DESK-ORG', 24.99, 30, TRUE),
-(40, 40, 'CAM-LEGACY', 199.99, 0, FALSE)
+(40, 40, 'CAM-LEGACY', 199.99, 0, FALSE),
+
+-- Previously missing entirely: product 10 (BrightPhone Secure) had ZERO variants — a real data bug
+-- found while broadening variant coverage below, not a hypothetical. plan.md §6/REQ-10.3 both say
+-- this "should never occur"; it did, here, until now.
+(41, 10, 'PHONE-SECURE-BLK', 849.99, 9, TRUE),
+
+-- Broadening beyond the single BrightPhone X1 (variants 6/7): one additional multi-variant product
+-- per OTHER category (9 more, covering every category this seed touches), so AC-CATALOG-4's
+-- single-vs-multi-variant frontend paths have more than one real example to exercise. Each existing
+-- single-variant row above that gains a sibling below also gets its own attribute row in the
+-- variant_attribute block further down — a "multi-variant" product whose variants have no
+-- DISTINGUISHING attribute at all would be a confusing product to actually look at.
+(42, 1,  'LAP-AIR-13-SLV',    799.99, 6,  TRUE),  -- Laptops: Air 13 also in Silver
+(43, 11, 'TAB-10-BLK',        299.99, 7,  TRUE),  -- Tablets: Tab 10 also in Black
+(44, 16, 'BUDS-WLS-WHT',       89.99, 13, TRUE),  -- Audio: Buds also in White
+(45, 21, 'CAM-4K-SLV',        899.99, 3,  TRUE),  -- Cameras: 4K cam also in Silver
+(46, 26, 'CONSOLE-ONE-1TB',   549.99, 4,  TRUE),  -- Gaming: Console also in 1TB
+(47, 31, 'KEY-MECH-WHT',      109.99, 5,  TRUE),  -- Computer Accessories: keyboard also in White
+(48, 36, 'HOME-HUB-BLK',      149.99, 6,  TRUE),  -- Smart Home: Hub also in Black
+(49, 38, 'ROBOT-KIT-BLU',      89.99, 3,  TRUE),  -- Toys: Robot Kit also in Blue
+(50, 39, 'DESK-ORG-WHT',       24.99, 22, TRUE)   -- Office Equipment: Organizer also in White
 ON DUPLICATE KEY UPDATE
     product_id = VALUES(product_id),
     sku = VALUES(sku),
     price = VALUES(price),
     stock_quantity = VALUES(stock_quantity),
     is_active = VALUES(is_active);
+
+
+-- Variant attributes (EAV side tables). Originally these three tables were entirely empty in this
+-- seed script — BrightPhone X1's variant picker had nothing to label its options with and fell back
+-- to showing a raw SKU ("PHONE-X1-BLK") instead of "Black"/"White" (found by actually loading the
+-- product detail page, not by inspecting the SQL). Since broadened to cover one multi-variant
+-- product per category (see product_variant rows 42-50 above) — every variant of a multi-variant
+-- product gets its own attribute row here, including the ORIGINAL single variant that gained a
+-- sibling (e.g. variant 1, LAP-AIR-13, now needs "Color: Black" since LAP-AIR-13-SLV exists to be
+-- distinguished from). Genuinely single-variant products (most of the catalog) still have none —
+-- FR-CATALOG-5 doesn't need one to distinguish, since there's nothing to distinguish it from.
+INSERT INTO attribute_name (attribute_name_id, name) VALUES
+(1, 'Color'),
+(2, 'Storage')
+ON DUPLICATE KEY UPDATE name = VALUES(name);
+
+INSERT INTO attribute_value (attribute_value_id, attribute_name_id, value) VALUES
+(1, 1, 'Black'),
+(2, 1, 'White'),
+(3, 1, 'Silver'),
+(4, 1, 'Gray'),
+(5, 1, 'Blue'),
+(6, 1, 'Red'),
+(7, 2, '512GB'),
+(8, 2, '1TB')
+ON DUPLICATE KEY UPDATE attribute_name_id = VALUES(attribute_name_id), value = VALUES(value);
+
+INSERT INTO variant_attribute (variant_id, attribute_value_id) VALUES
+(6, 1),   -- PHONE-X1-BLK        -> Color: Black
+(7, 2),   -- PHONE-X1-WHT        -> Color: White
+(1, 1),   -- LAP-AIR-13          -> Color: Black
+(42, 3),  -- LAP-AIR-13-SLV      -> Color: Silver
+(11, 4),  -- TAB-10-GRY          -> Color: Gray
+(43, 1),  -- TAB-10-BLK          -> Color: Black
+(16, 1),  -- BUDS-WLS-BLK        -> Color: Black
+(44, 2),  -- BUDS-WLS-WHT        -> Color: White
+(21, 1),  -- CAM-4K-BLK          -> Color: Black
+(45, 3),  -- CAM-4K-SLV          -> Color: Silver
+(26, 7),  -- CONSOLE-ONE         -> Storage: 512GB
+(46, 8),  -- CONSOLE-ONE-1TB     -> Storage: 1TB
+(31, 1),  -- KEY-MECH-BLK        -> Color: Black
+(47, 2),  -- KEY-MECH-WHT        -> Color: White
+(36, 2),  -- HOME-HUB            -> Color: White
+(48, 1),  -- HOME-HUB-BLK        -> Color: Black
+(38, 6),  -- ROBOT-KIT           -> Color: Red
+(49, 5),  -- ROBOT-KIT-BLU       -> Color: Blue
+(39, 1),  -- DESK-ORG            -> Color: Black
+(50, 2)   -- DESK-ORG-WHT        -> Color: White
+ON DUPLICATE KEY UPDATE variant_id = VALUES(variant_id);
 
 
 COMMIT;

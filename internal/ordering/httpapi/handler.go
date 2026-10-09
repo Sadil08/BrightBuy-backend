@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -58,9 +59,8 @@ type stockErrorResponse struct {
 }
 
 func (h *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
-	claims, ok := auth.CustomerClaims(r)
+	customerID, ok := customerID(w, r)
 	if !ok {
-		httpx.WriteError(w, http.StatusUnauthorized, "UNAUTHENTICATED", "authentication required")
 		return
 	}
 	var req checkoutRequest
@@ -69,7 +69,7 @@ func (h *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := r.Header.Get("Idempotency-Key")
-	order, err := h.service.PlaceOrder(r.Context(), claims.CustomerID, key, app.PlaceOrderRequest{
+	order, err := h.service.PlaceOrder(r.Context(), customerID, key, app.PlaceOrderRequest{
 		DeliveryMode: req.DeliveryMode, DeliveryCityID: req.DeliveryCityID,
 		DeliveryAddress: req.DeliveryAddress, PaymentMethod: req.PaymentMethod,
 		CardToken: req.Card.Token,
@@ -89,6 +89,7 @@ func (h *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, app.ErrInvalidRequest):
 			httpx.WriteError(w, http.StatusBadRequest, "VALIDATION_ERROR", "checkout request is invalid")
 		default:
+			slog.ErrorContext(r.Context(), "checkout failed", "error", err)
 			httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "checkout failed")
 		}
 		return
@@ -97,14 +98,14 @@ func (h *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ListOrders(w http.ResponseWriter, r *http.Request) {
-	claims, ok := auth.CustomerClaims(r)
+	customerID, ok := customerID(w, r)
 	if !ok {
-		httpx.WriteError(w, http.StatusUnauthorized, "UNAUTHENTICATED", "authentication required")
 		return
 	}
 	page, size := positiveQueryInt(r, "page", 1), positiveQueryInt(r, "size", 20)
-	orders, total, err := h.service.ListOrders(r.Context(), claims.CustomerID, page, size)
+	orders, total, err := h.service.ListOrders(r.Context(), customerID, page, size)
 	if err != nil {
+		slog.ErrorContext(r.Context(), "list orders failed", "error", err)
 		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not list orders")
 		return
 	}
@@ -114,9 +115,8 @@ func (h *Handler) ListOrders(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetOrder(w http.ResponseWriter, r *http.Request) {
-	claims, ok := auth.CustomerClaims(r)
+	customerID, ok := customerID(w, r)
 	if !ok {
-		httpx.WriteError(w, http.StatusUnauthorized, "UNAUTHENTICATED", "authentication required")
 		return
 	}
 	orderID, err := strconv.Atoi(chi.URLParam(r, "orderId"))
@@ -124,25 +124,40 @@ func (h *Handler) GetOrder(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusNotFound, "ORDER_NOT_FOUND", "order not found")
 		return
 	}
-	order, err := h.service.GetOrder(r.Context(), claims.CustomerID, orderID)
+	order, err := h.service.GetOrder(r.Context(), customerID, orderID)
 	if errors.Is(err, app.ErrOrderNotFound) {
 		httpx.WriteError(w, http.StatusNotFound, "ORDER_NOT_FOUND", "order not found")
 		return
 	}
 	if err != nil {
+		slog.ErrorContext(r.Context(), "get order failed", "error", err)
 		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not retrieve order")
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, order)
 }
 
-func RegisterRoutes(r chi.Router, h *Handler, signingKey []byte) {
-	secured := r.With(func(next http.Handler) http.Handler {
-		return auth.RequireCustomer(signingKey, next)
+// RegisterRoutes wires checkout and order history. Every route needs a valid session and the
+// CUSTOMER role (FR-CHECKOUT-20); Group scopes that middleware to these routes only.
+func RegisterRoutes(r chi.Router, h *Handler, tokens *auth.TokenIssuer) {
+	r.Group(func(r chi.Router) {
+		r.Use(auth.Authenticate(tokens), auth.RequireRole("CUSTOMER"))
+		r.Post("/checkout", h.Checkout)
+		r.Get("/orders", h.ListOrders)
+		r.Get("/orders/{orderId}", h.GetOrder)
 	})
-	secured.Post("/checkout", h.Checkout)
-	secured.Get("/orders", h.ListOrders)
-	secured.Get("/orders/{orderId}", h.GetOrder)
+}
+
+// customerID returns the logged-in customer's id from the verified JWT claims — never from the
+// request (FR-CHECKOUT-19, SEC-CHECKOUT-2). A token without one (issued before the id was added to
+// the JWT, at most 15 minutes old) is told to sign in again rather than guessed at.
+func customerID(w http.ResponseWriter, r *http.Request) (int, bool) {
+	claims := auth.ClaimsFromContext(r.Context())
+	if claims == nil || claims.CustomerID <= 0 {
+		httpx.WriteError(w, http.StatusUnauthorized, "UNAUTHENTICATED", "authentication required")
+		return 0, false
+	}
+	return claims.CustomerID, true
 }
 
 func positiveQueryInt(r *http.Request, key string, fallback int) int {

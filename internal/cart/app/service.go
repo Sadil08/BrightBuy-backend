@@ -1,125 +1,218 @@
 package app
 
 import (
-	"brightbuy-backend/internal/cart/domain"
-	"brightbuy-backend/internal/cart/mysql"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+
+	"brightbuy-backend/internal/cart/domain"
+	catalogapp "brightbuy-backend/internal/catalog/app"
 )
 
+// maxMergeItems bounds a guest-cart merge so one request can't trigger unbounded writes.
+const maxMergeItems = 100
+
+// Store is what the service needs from persistence. *mysql.CartRepository satisfies it; unit tests
+// use a fake. Every method that takes customerID is ownership-scoped in its SQL (SEC-CART-1).
+type Store interface {
+	Get(ctx context.Context, customerID int) (*domain.Cart, error)
+	UpsertLine(ctx context.Context, customerID, variantID, quantity int) (*domain.Cart, error)
+	FindLine(ctx context.Context, customerID, variantID int) (*domain.CartItem, error)
+	FindLineByID(ctx context.Context, customerID, cartItemID int) (*domain.CartItem, error)
+	DeleteLine(ctx context.Context, customerID, variantID int) error
+	CustomerIDForUser(ctx context.Context, userAccountID int) (int, error)
+	ClearItemsInTx(ctx context.Context, tx *sql.Tx, customerID int) error
+}
+
+// LineInput is one (variant, quantity) pair from the client. There is deliberately no price field:
+// current prices are resolved through Catalog (SEC-CART-2).
+type LineInput struct {
+	VariantID int
+	Quantity  int
+}
+
 // Service contains the cart business logic.
-// It validates requests and orchestrates repository calls.
 type Service struct {
-	repo *mysql.CartRepository
+	repo    Store
+	catalog Catalog
 }
 
-func NewService(repo *mysql.CartRepository) *Service {
-	return &Service{repo: repo}
+// Catalog is the subset of catalog business logic that cart needs. It is a separate port so the
+// cart service can be unit-tested with a fake instead of a real catalog service.
+type Catalog interface {
+	GetVariantForCart(ctx context.Context, variantID int) (*catalogapp.CartVariant, error)
 }
 
-func (s *Service) GetCart(ctx context.Context, customerID int) (*domain.Cart, error) {
-	if customerID <= 0 {
-		return nil, fmt.Errorf("customer ID must be positive")
-	}
-
-	return s.repo.Get(ctx, customerID)
+func NewService(repo Store, catalog Catalog) *Service {
+	return &Service{repo: repo, catalog: catalog}
 }
 
+// CustomerIDForUser resolves the authenticated user_account_id to the customer who owns the cart.
+func (s *Service) CustomerIDForUser(ctx context.Context, userAccountID int) (int, error) {
+	return s.repo.CustomerIDForUser(ctx, userAccountID)
+}
+
+// ClearItemsInTx empties the customer's cart inside tx; used by checkout so the order and the cart
+// clear commit or roll back together.
 func (s *Service) ClearItemsInTx(ctx context.Context, tx *sql.Tx, customerID int) error {
 	if customerID <= 0 {
-		return fmt.Errorf("customer ID must be positive")
+		return fmt.Errorf("%w: customer ID must be positive", domain.ErrInvalidInput)
 	}
 	return s.repo.ClearItemsInTx(ctx, tx, customerID)
 }
 
-func (s *Service) AddItem(
-	ctx context.Context,
-	customerID, variantID, quantity int,
-) (*domain.Cart, error) {
-	if customerID <= 0 || variantID <= 0 {
-		return nil, fmt.Errorf("customer ID and variant ID must be positive")
-	}
-	if quantity < 1 {
-		return nil, fmt.Errorf("quantity must be at least 1")
-	}
-
-	// start with the amount being added.
-	newQty := quantity
-
-	existing, err := s.repo.FindLine(ctx, customerID, variantID)
+func (s *Service) GetCart(ctx context.Context, customerID int) (*domain.Cart, error) {
+	cart, err := s.repo.Get(ctx, customerID)
 	if err != nil {
-		return nil, fmt.Errorf("find cart item: %w", err)
-	}
-
-	if existing != nil {
-		newQty = existing.Quantity + quantity
-	}
-
-	if err := s.validateStock(ctx, variantID, newQty); err != nil {
 		return nil, err
 	}
 
-	return s.repo.UpsertLine(ctx, customerID, variantID, newQty)
+	cart.Subtotal = 0
+	for i := range cart.Items {
+		item := &cart.Items[i]
+		variant, err := s.catalog.GetVariantForCart(ctx, item.VariantID)
+		if errors.Is(err, catalogapp.ErrNotFound) {
+			item.Unavailable = true
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("get catalog data for cart variant %d: %w", item.VariantID, err)
+		}
+
+		item.ProductName = variant.ProductName
+		item.UnitPrice = domain.Money(variant.Price.Cents())
+		item.Unavailable = !variant.Available
+		item.StockWarning = variant.Available && item.Quantity > variant.StockQuantity
+		item.LineTotal = item.UnitPrice * domain.Money(item.Quantity)
+		if !item.Unavailable {
+			cart.Subtotal += item.LineTotal
+		}
+	}
+
+	return cart, nil
 }
 
-func (s *Service) UpdateItemQuantity(
-	ctx context.Context,
-	customerID, variantID, quantity int,
-) (*domain.Cart, error) {
-	if customerID <= 0 || variantID <= 0 {
-		return nil, fmt.Errorf("customer ID and variant ID must be positive")
+// AddItem makes the line hold exactly `quantity` — it SETS, it does not add to the existing
+// quantity (plan.md §6: matches PATCH, avoids "add 2, add 2, got 4" surprises).
+func (s *Service) AddItem(ctx context.Context, customerID, variantID, quantity int) (*domain.Cart, error) {
+	if quantity < 1 || quantity > domain.MaxLineQuantity {
+		return nil, fmt.Errorf("%w: quantity must be between 1 and %d", domain.ErrInvalidInput, domain.MaxLineQuantity)
 	}
-	if quantity < 1 {
-		return nil, fmt.Errorf("quantity must be at least 1")
-	}
-
-	existing, err := s.repo.FindLine(ctx, customerID, variantID)
-	if err != nil {
-		return nil, fmt.Errorf("find cart item: %w", err)
-	}
-	if existing == nil {
-		return nil, fmt.Errorf("cart item not found")
-	}
-
 	if err := s.validateStock(ctx, variantID, quantity); err != nil {
 		return nil, err
 	}
+	if _, err := s.repo.UpsertLine(ctx, customerID, variantID, quantity); err != nil {
+		return nil, err
+	}
+	return s.GetCart(ctx, customerID)
+}
 
-	return s.repo.UpsertLine(ctx, customerID, variantID, quantity)
+// UpdateItemQuantity sets the quantity of one of the caller's cart lines. Quantity 0 is the same
+// as removing it (plan.md §6 — one code path).
+func (s *Service) UpdateItemQuantity(ctx context.Context, customerID, cartItemID, quantity int) (*domain.Cart, error) {
+	if quantity < 0 || quantity > domain.MaxLineQuantity {
+		return nil, fmt.Errorf("%w: quantity must be between 0 and %d", domain.ErrInvalidInput, domain.MaxLineQuantity)
+	}
+	line, err := s.repo.FindLineByID(ctx, customerID, cartItemID)
+	if err != nil {
+		return nil, err
+	}
+	if line == nil {
+		return nil, domain.ErrLineNotFound
+	}
+	if quantity == 0 {
+		return s.removeLine(ctx, customerID, line.VariantID)
+	}
+	if err := s.validateStock(ctx, line.VariantID, quantity); err != nil {
+		return nil, err
+	}
+	if _, err := s.repo.UpsertLine(ctx, customerID, line.VariantID, quantity); err != nil {
+		return nil, err
+	}
+	return s.GetCart(ctx, customerID)
+}
+
+// RemoveItem deletes one of the caller's cart lines and returns the remaining cart.
+func (s *Service) RemoveItem(ctx context.Context, customerID, cartItemID int) (*domain.Cart, error) {
+	line, err := s.repo.FindLineByID(ctx, customerID, cartItemID)
+	if err != nil {
+		return nil, err
+	}
+	if line == nil {
+		return nil, domain.ErrLineNotFound
+	}
+	return s.removeLine(ctx, customerID, line.VariantID)
+}
+
+func (s *Service) removeLine(ctx context.Context, customerID, variantID int) (*domain.Cart, error) {
+	if err := s.repo.DeleteLine(ctx, customerID, variantID); err != nil {
+		return nil, fmt.Errorf("delete cart item: %w", err)
+	}
+	return s.GetCart(ctx, customerID)
+}
+
+// Merge folds a guest's browser cart into the customer's server cart on login (FR-CART-5). Where a
+// variant is in both, the HIGHER quantity wins — not the sum (AC-CART-4). Stock is NOT enforced
+// here: the cart view flags over-stock lines with stockWarning and checkout is the authoritative
+// check, so one stale guest line must not fail the whole merge. Variants that no longer exist or
+// are no longer sold are skipped for the same reason.
+func (s *Service) Merge(ctx context.Context, customerID int, items []LineInput) (*domain.Cart, error) {
+	if len(items) > maxMergeItems {
+		return nil, fmt.Errorf("%w: too many items to merge (max %d)", domain.ErrInvalidInput, maxMergeItems)
+	}
+	for _, in := range items {
+		if in.VariantID < 1 || in.Quantity < 1 || in.Quantity > domain.MaxLineQuantity {
+			return nil, fmt.Errorf("%w: variantId must be >= 1 and quantity between 1 and %d", domain.ErrInvalidInput, domain.MaxLineQuantity)
+		}
+	}
+
+	for _, in := range items {
+		variant, err := s.catalog.GetVariantForCart(ctx, in.VariantID)
+		if err != nil {
+			if errors.Is(err, catalogapp.ErrNotFound) {
+				continue
+			}
+			return nil, err
+		}
+		if !variant.Available {
+			continue
+		}
+		existing, err := s.repo.FindLine(ctx, customerID, in.VariantID)
+		if err != nil {
+			return nil, fmt.Errorf("find cart item: %w", err)
+		}
+		merged := in.Quantity
+		if existing != nil && existing.Quantity > merged {
+			merged = existing.Quantity
+		}
+		if _, err := s.repo.UpsertLine(ctx, customerID, in.VariantID, merged); err != nil {
+			return nil, err
+		}
+	}
+	return s.GetCart(ctx, customerID)
 }
 
 func (s *Service) validateStock(
 	ctx context.Context,
 	variantID, requestedQty int,
 ) error {
-	stock, err := s.repo.VariantStock(ctx, variantID)
+	variant, err := s.catalog.GetVariantForCart(ctx, variantID)
+	if errors.Is(err, catalogapp.ErrNotFound) {
+		return domain.ErrVariantNotFound
+	}
 	if err != nil {
 		return err
 	}
-
-	if requestedQty > stock {
-		return fmt.Errorf(
-			"requested quantity %d exceeds available stock %d",
-			requestedQty,
-			stock,
-		)
+	if !variant.Available {
+		return domain.ErrVariantNotFound
+	}
+	if requestedQty > variant.StockQuantity {
+		return &domain.StockExceededError{
+			Requested: requestedQty,
+			Available: variant.StockQuantity,
+		}
 	}
 
 	return nil
-}
-
-func (s *Service) RemoveItem(
-	ctx context.Context,
-	customerID, variantID int,
-) (*domain.Cart, error) {
-	if customerID <= 0 || variantID <= 0 {
-		return nil, fmt.Errorf("customer ID and variant ID must be positive")
-	}
-
-	if err := s.repo.DeleteLine(ctx, customerID, variantID); err != nil {
-		return nil, fmt.Errorf("delete cart item: %w", err)
-	}
-
-	return s.repo.Get(ctx, customerID)
 }

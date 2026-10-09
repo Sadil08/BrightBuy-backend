@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"brightbuy-backend/internal/ordering/app"
 	orderdomain "brightbuy-backend/internal/ordering/domain"
@@ -33,10 +32,10 @@ func (f *fakeService) ListOrders(_ context.Context, customerID, _, _ int) ([]ord
 }
 
 func TestCheckoutRequiresCustomerSessionAndUsesClaimCustomerID(t *testing.T) {
-	key := []byte("0123456789abcdef0123456789abcdef")
+	issuer := auth.NewTokenIssuer("0123456789abcdef0123456789abcdef")
 	service := &fakeService{}
 	router := chi.NewRouter()
-	RegisterRoutes(router, NewHandler(service), key)
+	RegisterRoutes(router, NewHandler(service), issuer)
 
 	req := httptest.NewRequest(http.MethodPost, "/checkout", strings.NewReader(`{"deliveryMode":"StorePickup","paymentMethod":"COD"}`))
 	rec := httptest.NewRecorder()
@@ -45,13 +44,13 @@ func TestCheckoutRequiresCustomerSessionAndUsesClaimCustomerID(t *testing.T) {
 		t.Fatalf("unauthenticated status=%d, want 401", rec.Code)
 	}
 
-	token, err := auth.IssueCustomerToken(key, 99, 37, time.Now())
+	token, err := issuer.IssueAccessTokenForCustomer(99, 37, "CUSTOMER", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	req = httptest.NewRequest(http.MethodPost, "/checkout", strings.NewReader(`{"deliveryMode":"StorePickup","paymentMethod":"COD"}`))
 	req.Header.Set("Idempotency-Key", "request-1")
-	req.AddCookie(&http.Cookie{Name: "brightbuy_session", Value: token})
+	req.AddCookie(&http.Cookie{Name: auth.AccessTokenCookie, Value: token})
 	rec = httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
@@ -63,20 +62,47 @@ func TestCheckoutRequiresCustomerSessionAndUsesClaimCustomerID(t *testing.T) {
 }
 
 func TestGetOrderPassesSignedCustomerIDToOwnershipQuery(t *testing.T) {
-	key := []byte("0123456789abcdef0123456789abcdef")
+	issuer := auth.NewTokenIssuer("0123456789abcdef0123456789abcdef")
 	service := &fakeService{}
 	router := chi.NewRouter()
-	RegisterRoutes(router, NewHandler(service), key)
-	token, err := auth.IssueCustomerToken(key, 99, 37, time.Now())
+	RegisterRoutes(router, NewHandler(service), issuer)
+	token, err := issuer.IssueAccessTokenForCustomer(99, 37, "CUSTOMER", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/orders/14", nil)
-	req.AddCookie(&http.Cookie{Name: "brightbuy_session", Value: token})
+	req.AddCookie(&http.Cookie{Name: auth.AccessTokenCookie, Value: token})
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK || service.customerID != 37 || service.orderID != 14 {
 		t.Fatalf("status=%d customer=%d order=%d body=%s", rec.Code, service.customerID, service.orderID, rec.Body.String())
+	}
+}
+
+func TestOrderRoutesRejectNonCustomersAndTokensWithoutCustomerID(t *testing.T) {
+	issuer := auth.NewTokenIssuer("0123456789abcdef0123456789abcdef")
+	router := chi.NewRouter()
+	RegisterRoutes(router, NewHandler(&fakeService{}), issuer)
+	cases := []struct {
+		name string
+		tok  func() (string, error)
+		want int
+	}{
+		{"staff role", func() (string, error) { return issuer.IssueAccessTokenForCustomer(5, 0, "ADMIN", nil) }, http.StatusForbidden},
+		{"customer token with no customer id", func() (string, error) { return issuer.IssueAccessToken(5, "CUSTOMER", nil) }, http.StatusUnauthorized},
+	}
+	for _, c := range cases {
+		tok, err := c.tok()
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest(http.MethodGet, "/orders", nil)
+		req.AddCookie(&http.Cookie{Name: auth.AccessTokenCookie, Value: tok})
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != c.want {
+			t.Errorf("%s: got %d, want %d", c.name, rec.Code, c.want)
+		}
 	}
 }

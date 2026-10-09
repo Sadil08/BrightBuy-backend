@@ -60,6 +60,12 @@ type fakePayments struct {
 	amount int64
 	key    string
 	called bool
+	voided []string
+}
+
+func (f *fakePayments) Void(_ context.Context, providerReference string) error {
+	f.voided = append(f.voided, providerReference)
+	return nil
 }
 
 func (f *fakePayments) Authorize(_ context.Context, amount int64, _, idempotencyKey string) (payment.PaymentAuth, error) {
@@ -145,6 +151,42 @@ func TestPlaceOrderAuthorizationFailureDoesNotStartTransaction(t *testing.T) {
 	}
 	if txRan || cart.cleared {
 		t.Fatalf("failed authorization changed state: txRan=%v cartCleared=%v", txRan, cart.cleared)
+	}
+}
+
+func TestPlaceOrderVoidsCardAuthorizationWhenOrderCannotBeCreated(t *testing.T) {
+	cart := &fakeCart{cart: &cartdomain.Cart{CustomerID: 8, Subtotal: 10000, Items: []cartdomain.CartItem{{VariantID: 12, Quantity: 1}}}}
+	orders := &fakeOrders{config: map[string]string{"tax_rate_percent": "8.25"}}
+	payments := &fakePayments{auth: payment.PaymentAuth{ProviderReference: "ref-9", LastFour: "4242"}}
+	service := NewCheckoutService(cart, orders, payments, func(context.Context, func(*sql.Tx) error) error {
+		return ErrStockExceeded // as sp_place_order reports when stock ran out
+	})
+	_, err := service.PlaceOrder(context.Background(), 8, "attempt-stock", PlaceOrderRequest{
+		DeliveryMode: orderdomain.StorePickup, PaymentMethod: orderdomain.PaymentCard, CardToken: "tok_test",
+	})
+	if !errors.Is(err, ErrStockExceeded) {
+		t.Fatalf("error=%v, want ErrStockExceeded", err)
+	}
+	if len(payments.voided) != 1 || payments.voided[0] != "ref-9" {
+		t.Fatalf("voided=%v, want the authorization released exactly once", payments.voided)
+	}
+	if cart.cleared {
+		t.Fatal("cart must stay intact when the order fails (AC-CHECKOUT-4)")
+	}
+}
+
+func TestPlaceOrderDoesNotVoidWhenNoCardWasAuthorized(t *testing.T) {
+	cart := &fakeCart{cart: &cartdomain.Cart{CustomerID: 8, Subtotal: 10000, Items: []cartdomain.CartItem{{VariantID: 12, Quantity: 1}}}}
+	orders := &fakeOrders{config: map[string]string{"tax_rate_percent": "8.25"}}
+	payments := &fakePayments{}
+	service := NewCheckoutService(cart, orders, payments, func(context.Context, func(*sql.Tx) error) error {
+		return ErrStockExceeded
+	})
+	_, _ = service.PlaceOrder(context.Background(), 8, "attempt-cod", PlaceOrderRequest{
+		DeliveryMode: orderdomain.StorePickup, PaymentMethod: orderdomain.PaymentCOD,
+	})
+	if len(payments.voided) != 0 {
+		t.Fatalf("voided=%v, want none for COD", payments.voided)
 	}
 }
 

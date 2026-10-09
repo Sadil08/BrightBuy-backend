@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"unicode"
 
@@ -169,6 +170,16 @@ func (s *CheckoutService) PlaceOrder(
 		}
 		return nil
 	})
+	if err != nil && paymentAuth.ProviderReference != "" {
+		// The card was authorized before the transaction, but no order exists: release the hold so
+		// the customer isn't charged for nothing. WithoutCancel so a dropped client connection (which
+		// cancels ctx) can't skip the release. Best-effort — a failure is logged for reconciliation.
+		voidCtx := context.WithoutCancel(ctx)
+		if voidErr := s.payments.Void(voidCtx, paymentAuth.ProviderReference); voidErr != nil {
+			slog.ErrorContext(voidCtx, "could not void authorization after failed checkout",
+				"providerReference", paymentAuth.ProviderReference, "error", voidErr)
+		}
+	}
 	if errors.Is(err, ErrStockExceeded) {
 		unavailable, diagnosticErr := s.orders.DiagnoseUnavailableLines(ctx, cart.Items)
 		if diagnosticErr != nil {
