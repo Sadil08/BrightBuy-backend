@@ -22,7 +22,6 @@ cp .env.example .env   # then edit if needed
 export $(cat .env | xargs)
 go run ./cmd/api
 ```
-
 ## Checks (what CI runs — `.github/workflows/ci.yml`)
 ```bash
 gofmt -l .          # formatting

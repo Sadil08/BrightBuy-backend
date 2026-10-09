@@ -40,6 +40,13 @@ func (f *fakeProductRepository) GetByID(ctx context.Context, id int) (*domain.Pr
 	return &p, nil
 }
 
+func (f *fakeProductRepository) GetVariantForCart(
+	context.Context,
+	int,
+) (*app.CartVariant, error) {
+	return nil, app.ErrNotFound
+}
+
 type fakeCategoryRepository struct {
 	categories []domain.Category
 }
@@ -309,5 +316,24 @@ func TestListProducts_PageAndSizeQueryParamsAreParsed(t *testing.T) {
 		if got.Page.Size != size {
 			t.Errorf("?size=%d: response page.size = %d, want %d", size, got.Page.Size, size)
 		}
+	}
+}
+
+// TestListProducts_InvalidPageAndSizeQueryParamsAreClamped checks that invalid pagination values
+// fall back to the same defaults used when the parameters are omitted.
+func TestListProducts_InvalidPageAndSizeQueryParamsAreClamped(t *testing.T) {
+	service := app.NewCatalogService(&fakeProductRepository{}, &fakeCategoryRepository{})
+	router := newTestRouter(NewCatalogHandler(service))
+
+	req := httptest.NewRequest(http.MethodGet, "/products?page=-1&size=101", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	var got ProductListDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.Page.Page != 1 || got.Page.Size != 20 {
+		t.Errorf("page = %+v, want {Page:1 Size:20 ...} for invalid query values", got.Page)
 	}
 }

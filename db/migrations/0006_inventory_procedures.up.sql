@@ -1,8 +1,6 @@
 DROP PROCEDURE IF EXISTS sp_adjust_stock;
 
-DELIMITER $$
-
---This is a MySQL stored procedure for adjusting product stock
+-- This is a MySQL stored procedure for adjusting product stock
 CREATE PROCEDURE sp_adjust_stock(
     IN p_variant_id INT,
     IN p_delta INT,
@@ -39,6 +37,4 @@ BEGIN
         (variant_id, change_qty, reason, acting_user_id, created_at)
     VALUES
         (p_variant_id, p_delta, p_reason, p_acting_user_id, UTC_TIMESTAMP());
-END$$
-
-DELIMITER ;
+END;

@@ -98,3 +98,11 @@ func TestGetProductNotFound(t *testing.T) {
 		t.Errorf("GetProduct error = %v, want %v", err, wantErr)
 	}
 }
+
+// GetVariantForCart returns current price and stock for internal cart business logic.
+func (f *fakeProductRepository) GetVariantForCart(
+	context.Context,
+	int,
+) (*CartVariant, error) {
+	return nil, ErrNotFound
+}

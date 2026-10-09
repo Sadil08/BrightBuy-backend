@@ -6,8 +6,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt" // for error formatting
-	"strconv"
-	"strings"
 
 	"brightbuy-backend/internal/cart/domain"
 )
@@ -60,26 +58,10 @@ func (r *CartRepository) Get(
 		return nil, fmt.Errorf("find cart: %w", err)
 	}
 
-	// Step 5: Get product + variant information, Step 6: Check whether items are available, Step 7: Calculate line totals, Step 8: Check stock, Step 9: Calculate subtotal
 	rows, err := r.db.QueryContext(ctx, `
-        SELECT        
-            ci.cart_item_id,
-            ci.variant_id,
-            COALESCE(p.name, ''),
-            pv.price,
-            ci.quantity,
-            pv.stock_quantity,
-            CASE
-                WHEN pv.variant_id IS NULL
-                  OR pv.is_active = FALSE
-                  OR p.is_active = FALSE
-                THEN 1
-                ELSE 0
-            END
+        SELECT ci.cart_item_id, ci.variant_id, ci.quantity
         FROM cart c
         JOIN cart_item ci ON ci.cart_id = c.cart_id
-        LEFT JOIN product_variant pv ON pv.variant_id = ci.variant_id
-        LEFT JOIN product p ON p.product_id = pv.product_id
         WHERE c.customer_id = ?
         ORDER BY ci.cart_item_id
     `, customerID)
@@ -90,42 +72,15 @@ func (r *CartRepository) Get(
 
 	for rows.Next() {
 		var item domain.CartItem
-		var price sql.NullString
-		var stock sql.NullInt64
-		var unavailable int
 
-		if err := rows.Scan( // Step 5: Get product + variant information
+		if err := rows.Scan(
 			&item.ID,
 			&item.VariantID,
-			&item.ProductName,
-			&price,
 			&item.Quantity,
-			&stock,
-			&unavailable,
 		); err != nil {
 			return nil, fmt.Errorf("scan cart item: %w", err)
 		}
 
-		item.Unavailable = unavailable == 1
-
-		if price.Valid {
-			item.UnitPrice, err = decimalToMoney(price.String)
-			if err != nil {
-				return nil, fmt.Errorf("parse cart item price: %w", err)
-			}
-		}
-
-		item.LineTotal = item.UnitPrice * domain.Money(item.Quantity)
-		availableStock := int64(0)
-		if stock.Valid {
-			availableStock = stock.Int64
-		}
-		item.StockWarning = !item.Unavailable && int64(item.Quantity) > availableStock
-
-		// Step 9: Calculate subtotal
-		if !item.Unavailable {
-			cart.Subtotal += item.LineTotal
-		}
 		cart.Items = append(cart.Items, item)
 	}
 
@@ -232,57 +187,6 @@ func (r *CartRepository) DeleteLine(
 	return nil
 }
 
-func decimalToMoney(value string) (domain.Money, error) {
-	whole, fraction, hasFraction := strings.Cut(value, ".")
-
-	if !hasFraction {
-		fraction = ""
-	}
-
-	if len(fraction) > 2 {
-		return 0, fmt.Errorf("expected a two-decimal price, got %q", value)
-	}
-	fraction += strings.Repeat("0", 2-len(fraction))
-
-	dollars, err := strconv.ParseInt(whole, 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid dollar amount %q: %w", value, err)
-	}
-	cents, err := strconv.ParseInt(fraction, 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid cents in %q: %w", value, err)
-	}
-
-	return domain.Money(dollars*100 + cents), nil
-}
-
-// VariantStock retrieves the stock quantity for a specific product variant from the database.
-// It returns the stock quantity as an integer and an error if any issues occur during the database query.
-func (r *CartRepository) VariantStock(
-	ctx context.Context,
-	variantID int,
-) (int, error) {
-	if variantID <= 0 {
-		return 0, domain.ErrVariantNotFound
-	}
-
-	var stock int
-	err := r.db.QueryRowContext(ctx, `
-        SELECT pv.stock_quantity
-        FROM product_variant pv
-        JOIN product p ON p.product_id = pv.product_id
-        WHERE pv.variant_id = ? AND pv.is_active = TRUE AND p.is_active = TRUE
-    `, variantID).Scan(&stock)
-	if err == sql.ErrNoRows {
-		return 0, domain.ErrVariantNotFound
-	}
-	if err != nil {
-		return 0, fmt.Errorf("get variant stock: %w", err)
-	}
-
-	return stock, nil
-}
-
 // CustomerIDForUser maps the authenticated user_account_id (from the JWT) to its customer profile.
 // Returns ErrNotCustomer when the account has no customer row (staff/manager/admin accounts).
 func (r *CartRepository) CustomerIDForUser(ctx context.Context, userAccountID int) (int, error) {
@@ -347,4 +251,22 @@ func (r *CartRepository) ensureCartID(ctx context.Context, customerID int) (int,
 		return 0, fmt.Errorf("find cart: %w", err)
 	}
 	return cartID, nil
+}
+
+// ClearItemsInTx empties the customer's cart inside the caller's transaction, so checkout can place
+// the order and clear the cart atomically (plan 04 §5.1). The cart row itself stays.
+func (r *CartRepository) ClearItemsInTx(ctx context.Context, tx *sql.Tx, customerID int) error {
+	if tx == nil || customerID <= 0 {
+		return fmt.Errorf("invalid cart clear transaction or customer ID")
+	}
+	_, err := tx.ExecContext(ctx, `
+        DELETE ci
+        FROM cart_item ci
+        JOIN cart c ON c.cart_id = ci.cart_id
+        WHERE c.customer_id = ?
+    `, customerID)
+	if err != nil {
+		return fmt.Errorf("clear cart items: %w", err)
+	}
+	return nil
 }

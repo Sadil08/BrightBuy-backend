@@ -26,6 +26,11 @@ type Money struct {
 	cents int64
 }
 
+// Cents returns the exact minor-unit amount for use by internal domain adapters.
+func (m Money) Cents() int64 {
+	return m.cents
+}
+
 // LessThan reports whether m is a smaller amount than other — e.g. for finding the cheapest variant
 // of a product. A direct `m < other` doesn't compile for a struct type in Go (only ==/!= work on
 // structs, never ordering operators), and m.cents/other.cents aren't reachable from outside this

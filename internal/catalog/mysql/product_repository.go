@@ -204,6 +204,37 @@ func (r *ProductRepository) selectProduct(ctx context.Context, id int) (*domain.
 	return &p, nil
 }
 
+// GetVariantForCart fetches a single variant's price and stock for internal cart business logic.
+// It is not used to build the customer-facing catalog response.
+func (r *ProductRepository) GetVariantForCart(
+	ctx context.Context,
+	variantID int,
+) (*app.CartVariant, error) {
+	var variant app.CartVariant
+
+	err := r.db.QueryRowContext(ctx, `
+        SELECT pv.variant_id, p.name, pv.price, pv.stock_quantity,
+               (pv.is_active = TRUE AND p.is_active = TRUE)
+        FROM product_variant pv
+        JOIN product p ON p.product_id = pv.product_id
+        WHERE pv.variant_id = ?
+    `, variantID).Scan(
+		&variant.ID,
+		&variant.ProductName,
+		&variant.Price,
+		&variant.StockQuantity,
+		&variant.Available,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("mysql: variant %d: %w", variantID, app.ErrNotFound)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("mysql: get variant %d for cart: %w", variantID, err)
+	}
+
+	return &variant, nil
+}
+
 func (r *ProductRepository) selectCategoriesForProduct(ctx context.Context, productID int) ([]domain.Category, error) {
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT c.category_id, c.name, COALESCE(c.description, '')

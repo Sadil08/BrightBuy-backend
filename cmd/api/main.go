@@ -37,6 +37,11 @@ import (
 	"brightbuy-backend/internal/shared/logging"
 	"brightbuy-backend/internal/shared/ratelimit"
 
+	orderapp "brightbuy-backend/internal/ordering/app"
+	orderhttp "brightbuy-backend/internal/ordering/httpapi"
+	ordermysql "brightbuy-backend/internal/ordering/mysql"
+	"brightbuy-backend/internal/payment"
+
 	deliveryapp "brightbuy-backend/internal/delivery/app"
 	deliveryhttp "brightbuy-backend/internal/delivery/httpapi"
 	deliverymysql "brightbuy-backend/internal/delivery/mysql"
@@ -146,13 +151,27 @@ func main() {
 
 	// 03-cart — third feature module, same bottom-up wiring as above.
 	cartRepo := cartmysql.NewCartRepository(db)
-	cartService := cartapp.NewService(cartRepo)
+	cartService := cartapp.NewService(cartRepo, catalogService)
 	cartHandler := carthttp.NewHandler(cartService)
+
+	// 04-checkout-orders — depends on cart's public service (to read the cart and clear it in the
+	// order's own transaction) and on the payment port, whose Phase 1 implementation is a stub.
+	orderRepo := ordermysql.NewOrderRepository(db)
+	checkoutService := orderapp.NewCheckoutService(
+		cartService,
+		orderRepo,
+		payment.StubProcessor{},
+		func(ctx context.Context, fn func(*sql.Tx) error) error {
+			return dbx.WithTx(ctx, db, fn)
+		},
+	)
+	orderHandler := orderhttp.NewHandler(checkoutService)
 
 	r.Route("/api/v1", func(apiRouter chi.Router) {
 		cataloghttp.RegisterRoutes(apiRouter, catalogHandler)
 		identityhttp.RegisterRoutes(apiRouter, authHandler, adminHandler, tokenIssuer, registerIPLimiter, loginIPLimiter)
 		carthttp.RegisterRoutes(apiRouter, cartHandler, tokenIssuer)
+		orderhttp.RegisterRoutes(apiRouter, orderHandler, tokenIssuer)
 	})
 
 	deliveryRepository := deliverymysql.NewRepository(db)
