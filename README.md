@@ -51,7 +51,6 @@ cannot corrupt data.
 
 - Go (version in `go.mod`)
 - Docker (MySQL 8 and MinIO run in containers; integration tests start their own with testcontainers)
-- [`golang-migrate`](https://github.com/golang-migrate/migrate) CLI (`migrate`)
 
 ## Run it locally
 
@@ -61,8 +60,7 @@ docker network create brightbuy-shared        # once, lets the frontend stack re
 docker compose up -d mysql minio
 
 # 2. apply the schema (use the root DB user: migrations create procedures and triggers)
-migrate -path db/migrations \
-  -database "mysql://root:devrootpass@tcp(127.0.0.1:3307)/brightbuy?multiStatements=true" up
+MIGRATE_DSN='root:devrootpass@tcp(127.0.0.1:3307)/brightbuy' go run ./cmd/migrate
 
 # 3. optional: sample data (40+ products, cities, checkout config)
 for f in catalog identity delivery checkout; do

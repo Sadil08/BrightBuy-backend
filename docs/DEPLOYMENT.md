@@ -51,16 +51,18 @@ TLS is set up by `DB_CA_CERT` (backend) and `x-tls-ca` (migrate), described next
 ## 2. Migrate
 
 Run from a machine that can reach the database, as the migration user (`avnadmin` on Aiven).
-`ca.pem` is the CA certificate downloaded from the host's console:
+`ca.pem` is the CA certificate downloaded from the host's console. Use the repo's own command, which
+does verified TLS the same way the API does (the packaged `migrate` CLI's `x-tls-ca` option is not
+reliable: several builds reject it with "invalid DSN"):
 
 ```bash
-migrate -path db/migrations \
-  -database 'mysql://avnadmin:PASSWORD@tcp(HOST:PORT)/brightbuy?multiStatements=true&x-tls-ca=/path/to/ca.pem' up
+MIGRATE_DSN='avnadmin:PASSWORD@tcp(HOST:PORT)/brightbuy' DB_CA_CERT="$(cat /path/to/ca.pem)" \
+  go run ./cmd/migrate            # up; also: version | down 1 | force 12
 ```
 
-(For a database without a private CA, leave `x-tls-ca` out.) Re-run it on every release that adds a
-file under `db/migrations/`. Checkout needs the rows migration `0010` seeds (tax rate and delivery
-fee), so never skip migrations.
+Use a password made of letters and digits (no `@ : /`). For a database without a private CA, leave
+`DB_CA_CERT` out. Re-run it on every release that adds a file under `db/migrations/`. Checkout needs
+the rows migration `0010` seeds (tax rate and delivery fee), so never skip migrations.
 
 ## 3. Backend
 
