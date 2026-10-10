@@ -18,7 +18,7 @@ import (
 )
 
 func TestImageService_MinIOAndMySQLIntegration(t *testing.T) {
-	db := testDB(t)
+	db := repoTestDB(t)
 	storage := testImageStorage(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -74,7 +74,7 @@ func TestImageService_MinIOAndMySQLIntegration(t *testing.T) {
 }
 
 func TestImageService_InvalidUploadIsDeleted(t *testing.T) {
-	db := testDB(t)
+	db := repoTestDB(t)
 	storage := testImageStorage(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()

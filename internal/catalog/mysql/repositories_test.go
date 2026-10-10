@@ -42,7 +42,7 @@ func uniqueValue(prefix string) string {
 	return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
 }
 
-func testDB(t *testing.T) *sql.DB {
+func repoTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	dsn := os.Getenv("BRIGHTBUY_TEST_DSN")
 	if dsn == "" {
@@ -62,7 +62,7 @@ func testDB(t *testing.T) *sql.DB {
 }
 
 func TestCreateProduct_Integration(t *testing.T) {
-	db := testDB(t)
+	db := repoTestDB(t)
 	repo := NewRepository(db)
 	ctx := context.Background()
 
@@ -160,7 +160,7 @@ func TestCreateProduct_Integration(t *testing.T) {
 }
 
 func TestCreateVariant_DuplicateSKU_ReturnsConflict(t *testing.T) {
-	db := testDB(t)
+	db := repoTestDB(t)
 	repo := NewRepository(db)
 	ctx := context.Background()
 
@@ -204,7 +204,7 @@ func TestCreateVariant_DuplicateSKU_ReturnsConflict(t *testing.T) {
 }
 
 func TestCreateProduct_InvalidCategory_RollsBack(t *testing.T) {
-	db := testDB(t)
+	db := repoTestDB(t)
 	repo := NewRepository(db)
 	ctx := context.Background()
 
@@ -265,7 +265,7 @@ func TestCreateProduct_InvalidCategory_RollsBack(t *testing.T) {
 }
 
 func TestCreateProduct_InvalidVariant_RollsBack(t *testing.T) {
-	db := testDB(t)
+	db := repoTestDB(t)
 	repo := NewRepository(db)
 	ctx := context.Background()
 
@@ -324,7 +324,7 @@ func TestCreateProduct_InvalidVariant_RollsBack(t *testing.T) {
 }
 
 func TestProduct_UpdateAndDeactivate_Integration(t *testing.T) {
-	db := testDB(t)
+	db := repoTestDB(t)
 	repo := NewRepository(db)
 	ctx := context.Background()
 
@@ -403,7 +403,7 @@ func TestProduct_UpdateAndDeactivate_Integration(t *testing.T) {
 }
 
 func TestVariant_UpdateAndDeactivate_Integration(t *testing.T) {
-	db := testDB(t)
+	db := repoTestDB(t)
 	repo := NewRepository(db)
 	ctx := context.Background()
 
@@ -504,7 +504,7 @@ func TestVariant_UpdateAndDeactivate_Integration(t *testing.T) {
 }
 
 func TestCategory_UpdateAndDeactivate_Integration(t *testing.T) {
-	db := testDB(t)
+	db := repoTestDB(t)
 	repo := NewRepository(db)
 	ctx := context.Background()
 
