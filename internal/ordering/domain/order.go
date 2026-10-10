@@ -49,6 +49,7 @@ type Order struct {
 	DeliveryFee   string        `json:"deliveryFee"`
 	TotalAmount   string        `json:"totalAmount"`
 	Delivery      Delivery      `json:"delivery"`
+	PaymentMethod PaymentMethod `json:"paymentMethod"`
 	PaymentStatus PaymentStatus `json:"paymentStatus"`
 	CreatedAt     time.Time     `json:"createdAt"`
 }

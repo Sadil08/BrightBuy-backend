@@ -248,3 +248,66 @@ func nullableText(value string) any {
 func centsAsDecimal(cents int64) string {
 	return fmt.Sprintf("%d.%02d", cents/100, cents%100)
 }
+
+func (r *OrderRepository) SetStatus(ctx context.Context, tx *sql.Tx, orderID int, status string) error {
+	_, err := tx.ExecContext(ctx, "UPDATE `order` SET status = ? WHERE order_id = ?", status, orderID)
+	if err != nil {
+		var mysqlErr *mysqlDriver.MySQLError
+		if errors.As(err, &mysqlErr) && mysqlErr.Number == 4010 {
+			return app.ErrInvalidTransition
+		}
+		return fmt.Errorf("set order status %d to %s: %w", orderID, status, err)
+	}
+	return nil
+}
+
+func (r *OrderRepository) CallCancelOrder(ctx context.Context, orderID int, actingUserID int) error {
+	_, err := r.db.ExecContext(ctx, "CALL sp_cancel_order(?, ?)", orderID, actingUserID)
+	if err != nil {
+		var mysqlErr *mysqlDriver.MySQLError
+		if errors.As(err, &mysqlErr) && mysqlErr.Number == 4010 {
+			return app.ErrInvalidTransition
+		}
+		if errors.As(err, &mysqlErr) && mysqlErr.Number == 4011 {
+			return app.ErrOrderNotFound
+		}
+		return fmt.Errorf("call sp_cancel_order %d: %w", orderID, err)
+	}
+	return nil
+}
+
+func (r *OrderRepository) GetByIDForStaff(ctx context.Context, orderID int) (*orderdomain.Order, error) {
+	var order orderdomain.Order
+	var subtotal, tax, fee, total string
+	var mode string
+	var estimatedDate time.Time
+	err := r.db.QueryRowContext(ctx, `
+		SELECT o.order_id, o.status, o.subtotal, o.tax_amount, o.delivery_fee, o.total_amount,
+		       o.order_date, d.mode, d.estimated_days, d.estimated_date, p.status, o.payment_method
+		FROM `+"`order`"+` o
+		JOIN delivery d ON d.order_id = o.order_id
+		JOIN payment p ON p.order_id = o.order_id
+		WHERE o.order_id = ?
+	`, orderID).Scan(
+		&order.ID, &order.Status, &subtotal, &tax, &fee, &total,
+		&order.CreatedAt, &mode, &order.Delivery.EstimatedDays, &estimatedDate, &order.PaymentStatus, &order.PaymentMethod,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, app.ErrOrderNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get order %d: %w", orderID, err)
+	}
+	order.Subtotal = subtotal
+	order.TaxAmount = tax
+	order.DeliveryFee = fee
+	order.TotalAmount = total
+	order.Delivery.Mode = orderdomain.DeliveryMode(mode)
+	order.Delivery.EstimatedDate = estimatedDate.Format("2006-01-02")
+	return &order, nil
+}
+
+func (r *OrderRepository) SetActingUser(ctx context.Context, tx *sql.Tx, actingUserID int) error {
+	_, err := tx.ExecContext(ctx, "SET @acting_user_id = ?", actingUserID)
+	return err
+}

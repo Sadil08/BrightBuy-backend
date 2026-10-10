@@ -169,12 +169,22 @@ func main() {
 		},
 	)
 	orderHandler := orderhttp.NewHandler(checkoutService)
+	paymentRepo := ordermysql.NewPaymentRepository()
+	orderStatusService := orderapp.NewOrderStatusService(
+		orderRepo,
+		paymentRepo,
+		func(ctx context.Context, fn func(*sql.Tx) error) error {
+			return dbx.WithTx(ctx, db, fn)
+		},
+	)
+	staffOrderHandler := orderhttp.NewStaffHandler(orderStatusService)
 
 	r.Route("/api/v1", func(apiRouter chi.Router) {
 		cataloghttp.RegisterRoutes(apiRouter, catalogHandler)
 		identityhttp.RegisterRoutes(apiRouter, authHandler, adminHandler, tokenIssuer, registerIPLimiter, loginIPLimiter)
 		carthttp.RegisterRoutes(apiRouter, cartHandler, tokenIssuer)
 		orderhttp.RegisterRoutes(apiRouter, orderHandler, tokenIssuer)
+		orderhttp.RegisterStaffRoutes(apiRouter, staffOrderHandler, tokenIssuer)
 	})
 
 	deliveryRepository := deliverymysql.NewRepository(db)
