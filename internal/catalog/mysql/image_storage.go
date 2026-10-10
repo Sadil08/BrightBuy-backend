@@ -20,6 +20,13 @@ type ImageStorage struct {
 }
 
 func NewImageStorage(endpoint, accessKey, secretKey, bucket string) (*ImageStorage, error) {
+	return NewImageStorageInRegion(endpoint, accessKey, secretKey, bucket, "")
+}
+
+// NewImageStorageInRegion pins the signing region. Backblaze B2 and Cloudflare R2 reject requests
+// signed for the wrong region (B2: e.g. eu-central-003, R2: auto), and the client's own region
+// auto-discovery is not reliable against them. Empty region keeps the client's default behaviour.
+func NewImageStorageInRegion(endpoint, accessKey, secretKey, bucket, region string) (*ImageStorage, error) {
 	parsed, err := url.Parse(endpoint)
 	if err != nil || parsed.Host == "" {
 		return nil, fmt.Errorf("image storage: invalid endpoint")
@@ -27,6 +34,7 @@ func NewImageStorage(endpoint, accessKey, secretKey, bucket string) (*ImageStora
 	client, err := minio.New(parsed.Host, &minio.Options{
 		Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
 		Secure: strings.EqualFold(parsed.Scheme, "https"),
+		Region: region,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("image storage: create client: %w", err)

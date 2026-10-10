@@ -36,6 +36,8 @@ type Config struct {
 	S3AccessKey   string
 	S3SecretKey   string
 	S3Bucket      string
+	// S3Region pins the request-signing region (needed by Backblaze B2 / Cloudflare R2). Optional.
+	S3Region string
 	// S3PublicURL is the public base product-image object keys are served from (a CDN in production,
 	// the bucket URL locally). Defaults to <S3_ENDPOINT_URL>/<S3_BUCKET>.
 	S3PublicURL string
@@ -58,6 +60,7 @@ func Load() (*Config, error) {
 		S3AccessKey:    getEnv("S3_ACCESS_KEY", "devaccesskey"),
 		S3SecretKey:    getEnv("S3_SECRET_KEY", "devsecretkey"),
 		S3Bucket:       getEnv("S3_BUCKET", "brightbuy-images"),
+		S3Region:       os.Getenv("S3_REGION"),
 	}
 
 	cfg.S3PublicURL = getEnv("S3_PUBLIC_URL", strings.TrimRight(cfg.S3EndpointURL, "/")+"/"+cfg.S3Bucket)

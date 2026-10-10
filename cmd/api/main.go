@@ -219,7 +219,7 @@ func main() {
 	catalogAdminService := catalogapp.NewCatalogAdminService(catalogAdminRepository, nil)
 	cataloghttp.RegisterAdminRoutes(r, cataloghttp.NewAdminHandler(catalogAdminService), guardPermission(tokenIssuer, "catalog:write"))
 	if cfg.S3EndpointURL != "" {
-		imageStorage, err := catalogmysql.NewImageStorage(cfg.S3EndpointURL, cfg.S3AccessKey, cfg.S3SecretKey, cfg.S3Bucket)
+		imageStorage, err := catalogmysql.NewImageStorageInRegion(cfg.S3EndpointURL, cfg.S3AccessKey, cfg.S3SecretKey, cfg.S3Bucket, cfg.S3Region)
 		if err != nil {
 			logger.Error("image storage setup failed", "error", err)
 			os.Exit(1)
