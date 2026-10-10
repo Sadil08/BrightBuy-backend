@@ -1,0 +1,7 @@
+.git
+.github
+.env*
+*.md
+docs
+db/seed
+cmd/migrate
