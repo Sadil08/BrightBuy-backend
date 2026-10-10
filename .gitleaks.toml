@@ -1,0 +1,10 @@
+# Extends gitleaks' built-in rules; only allowlists known-fake values so real secrets still fail CI.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Fake credentials used only by tests and local development"
+paths = [
+  # config_test.go holds a deliberately fake 32-byte key to test the JWT_SIGNING_KEY length rule.
+  '''internal/shared/config/config_test\.go''',
+]
