@@ -32,10 +32,16 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # Built from source with the SAME Go toolchain as the project (go-version-file above), not the
+      # action's pre-built release binary: that binary reads Go's compiled package data through an older
+      # library and fails on a newer Go with "export data version N is greater than maximum supported
+      # version M". Compiling it here keeps the linter and the compiler in step by construction.
+      # -tags=integration also lints the integration test files, which a plain run skips.
       - name: staticcheck
-        uses: dominikh/staticcheck-action@v1
-        with:
-          version: "latest"
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@latest
+          staticcheck ./...
+          staticcheck -tags=integration ./...
 
       - name: gitleaks (secret scan)
         uses: gitleaks/gitleaks-action@v2
@@ -57,13 +63,38 @@ jobs:
       - name: Build (compile check)
         run: go build ./...
 
+  # Continuous delivery, step 1: every green push to main produces a runnable image in GitHub's
+  # container registry (ghcr.io), tagged with the commit and `latest`. Any host that runs containers
+  # (Render, Fly.io, Railway, a VM) can pull it; see docs/DEPLOYMENT.md. Pull requests only BUILD the
+  # image (proving the Dockerfile works) and never push. GITHUB_TOKEN is enough: no extra secret.
   build-image:
     needs: lint-and-test
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+    env:
+      PUBLISH: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
     steps:
       - uses: actions/checkout@v4
-      - name: Build Docker image
-        run: docker build -t brightbuy-backend:${{ github.sha }} .
-      # Pushing to a registry (GHCR) is added once a registry/hosting target is chosen
-      # (TBD-7, specs/global/10_BA_AUDIT_OPEN_QUESTIONS.md).
+
+      # GHCR image names must be lowercase, and a GitHub username may not be.
+      - name: Image name
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/brightbuy-backend" >> "$GITHUB_ENV"
+
+      - name: Log in to GHCR
+        if: env.PUBLISH == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build (and push, on main)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ env.PUBLISH == 'true' }}
+          tags: |
+            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:latest

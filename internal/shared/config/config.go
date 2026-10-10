@@ -22,6 +22,10 @@ type Config struct {
 	Env string
 	// DatabaseDSN is the MySQL "Data Source Name" the driver connects with.
 	DatabaseDSN string
+	// DatabaseCACert is the PEM text of the certificate authority that signed the database server's
+	// TLS certificate. Optional: only managed databases with a private CA (Aiven...) need it. When set,
+	// the connection is encrypted AND verified against it (dbx.OpenWithCA).
+	DatabaseCACert string
 	// JWTSigningKey signs and verifies access/refresh tokens (specs/global/02_SECURITY_BASELINE.md §2).
 	JWTSigningKey string
 	// ReportingDSN is the optional read-only credential (brightbuy_reporting) for the reporting
@@ -42,15 +46,18 @@ type Config struct {
 // pointer panic three requests into serving traffic.
 func Load() (*Config, error) {
 	cfg := &Config{
-		Addr:          getEnv("ADDR", ":8080"),
-		Env:           getEnv("APP_ENV", "local"),
-		DatabaseDSN:   os.Getenv("DB_DSN"),
-		JWTSigningKey: os.Getenv("JWT_SIGNING_KEY"),
-		ReportingDSN:  os.Getenv("REPORTING_DB_DSN"),
-		S3EndpointURL: os.Getenv("S3_ENDPOINT_URL"),
-		S3AccessKey:   getEnv("S3_ACCESS_KEY", "devaccesskey"),
-		S3SecretKey:   getEnv("S3_SECRET_KEY", "devsecretkey"),
-		S3Bucket:      getEnv("S3_BUCKET", "brightbuy-images"),
+		// ADDR wins if set. Otherwise PORT, which most container hosts (Render, Railway, Cloud Run...)
+		// inject to say which port the app must listen on. Otherwise the local default.
+		Addr:           getEnv("ADDR", ":"+getEnv("PORT", "8080")),
+		Env:            getEnv("APP_ENV", "local"),
+		DatabaseDSN:    os.Getenv("DB_DSN"),
+		DatabaseCACert: os.Getenv("DB_CA_CERT"),
+		JWTSigningKey:  os.Getenv("JWT_SIGNING_KEY"),
+		ReportingDSN:   os.Getenv("REPORTING_DB_DSN"),
+		S3EndpointURL:  os.Getenv("S3_ENDPOINT_URL"),
+		S3AccessKey:    getEnv("S3_ACCESS_KEY", "devaccesskey"),
+		S3SecretKey:    getEnv("S3_SECRET_KEY", "devsecretkey"),
+		S3Bucket:       getEnv("S3_BUCKET", "brightbuy-images"),
 	}
 
 	cfg.S3PublicURL = getEnv("S3_PUBLIC_URL", strings.TrimRight(cfg.S3EndpointURL, "/")+"/"+cfg.S3Bucket)
