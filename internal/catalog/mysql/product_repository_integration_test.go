@@ -494,12 +494,10 @@ func TestProductRepository_List_PaginationBoundaries(t *testing.T) {
 	categoryID := insertCategory(t, ctx, "Pagination Category "+suffix, true)
 
 	const productCount = 5
-	var productIDs []int
 	for i := 0; i < productCount; i++ {
 		id := insertProduct(t, ctx, fmt.Sprintf("Paged Product %s %d", suffix, i), "x", true)
 		linkProductCategory(t, ctx, id, categoryID)
 		insertVariant(t, ctx, id, fmt.Sprintf("SKU-PAGE-%s-%d", suffix, i), "10.00", 1, true)
-		productIDs = append(productIDs, id)
 	}
 
 	repo := NewProductRepository(testDB)

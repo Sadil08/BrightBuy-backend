@@ -6,11 +6,14 @@ package dbx
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql" // registers the "mysql" driver with database/sql; never called directly
+	"github.com/go-sql-driver/mysql" // also registers the "mysql" driver with database/sql
 )
 
 // Open connects to MySQL using dsn and returns a ready-to-use connection pool.
@@ -24,7 +27,45 @@ func Open(dsn string) (*sql.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dbx: open: %w", err)
 	}
+	return configure(db)
+}
 
+// OpenWithCA is Open for a database whose TLS certificate is signed by a PRIVATE certificate
+// authority, which is how managed MySQL services (Aiven, for one) work: they require TLS but sign
+// with their own CA, so the system's trusted roots reject them. caPEM is that CA's certificate in PEM
+// form. The server is then fully VERIFIED (signature chain and host name), unlike the driver's
+// `tls=skip-verify`, which encrypts but would accept an impostor.
+//
+// An empty caPEM is exactly Open(dsn), so callers can pass the config value through unconditionally.
+// Any `tls=` option in the DSN is ignored when a CA is given: the CA decides.
+func OpenWithCA(dsn, caPEM string) (*sql.DB, error) {
+	if caPEM == "" {
+		return Open(dsn)
+	}
+
+	cfg, err := mysql.ParseDSN(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("dbx: parse dsn: %w", err)
+	}
+
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM([]byte(caPEM)) {
+		return nil, errors.New("dbx: DB_CA_CERT does not contain a valid PEM certificate")
+	}
+	// ServerName is left empty on purpose: the driver fills it in from the DSN's host, so the
+	// certificate must be valid for the host we dial.
+	cfg.TLSConfig = ""
+	cfg.TLS = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+
+	connector, err := mysql.NewConnector(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("dbx: connector: %w", err)
+	}
+	return configure(sql.OpenDB(connector))
+}
+
+// configure applies the pool settings and proves the database is reachable.
+func configure(db *sql.DB) (*sql.DB, error) {
 	db.SetMaxOpenConns(10)
 	db.SetMaxIdleConns(10)
 	db.SetConnMaxLifetime(5 * time.Minute)
@@ -34,6 +75,7 @@ func Open(dsn string) (*sql.DB, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
 		return nil, fmt.Errorf("dbx: ping: %w", err)
 	}
 

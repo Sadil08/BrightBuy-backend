@@ -66,7 +66,7 @@ func main() {
 
 	// 2. Open the database connection pool. Also fails fast: a backend instance that can't reach
 	// MySQL should never accept traffic in the first place.
-	db, err := dbx.Open(cfg.DatabaseDSN)
+	db, err := dbx.OpenWithCA(cfg.DatabaseDSN, cfg.DatabaseCACert)
 	if err != nil {
 		logger.Error("database connection failed", "error", err)
 		os.Exit(1)
