@@ -50,7 +50,7 @@ func (s *catalogRepositoryStub) ActiveCategoriesExist(context.Context, []int64) 
 
 func adminTestRouter(repo app.Repository) chi.Router {
 	r := chi.NewRouter()
-	RegisterAdminRoutes(r, NewAdminHandler(app.NewCatalogAdminService(repo, nil)))
+	RegisterAdminRoutes(r, NewAdminHandler(app.NewCatalogAdminService(repo, nil)), auth.RequirePermission("catalog:write"))
 	return r
 }
 

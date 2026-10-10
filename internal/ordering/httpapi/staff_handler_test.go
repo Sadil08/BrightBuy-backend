@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"brightbuy-backend/internal/ordering/app"
+	orderdomain "brightbuy-backend/internal/ordering/domain"
 	"brightbuy-backend/internal/shared/auth"
 	"github.com/go-chi/chi/v5"
 )
@@ -81,5 +82,37 @@ func TestStaffHandler_UpdateStatus_Conflict(t *testing.T) {
 
 	if rr.Code != http.StatusConflict {
 		t.Errorf("expected 409 Conflict, got %d", rr.Code)
+	}
+}
+
+type fakeStaffQueries struct{}
+
+func (fakeStaffQueries) GetOrder(_ context.Context, id int) (*orderdomain.Order, error) {
+	if id == 404 {
+		return nil, app.ErrOrderNotFound
+	}
+	return &orderdomain.Order{ID: id, Status: "Confirmed"}, nil
+}
+func (fakeStaffQueries) ListOrders(context.Context, string, int, int) ([]orderdomain.Order, int, error) {
+	return []orderdomain.Order{{ID: 1, Status: "Confirmed"}}, 1, nil
+}
+
+func TestStaffHandler_ReadEndpoints(t *testing.T) {
+	h := NewStaffHandler(&mockOrderStatusService{}).WithQueries(fakeStaffQueries{})
+	r := chi.NewRouter()
+	r.Get("/staff/orders", h.ListOrders)
+	r.Get("/staff/orders/{orderId}", h.GetOrder)
+
+	for path, want := range map[string]int{
+		"/staff/orders":              http.StatusOK,
+		"/staff/orders?status=Bogus": http.StatusBadRequest,
+		"/staff/orders/7":            http.StatusOK,
+		"/staff/orders/404":          http.StatusNotFound,
+	} {
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != want {
+			t.Errorf("GET %s = %d, want %d", path, rec.Code, want)
+		}
 	}
 }

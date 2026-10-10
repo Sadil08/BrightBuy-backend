@@ -82,3 +82,28 @@ func (s *OrderStatusService) UpdateStatus(ctx context.Context, actingUserID, ord
 func (s *OrderStatusService) Cancel(ctx context.Context, actingUserID, orderID int) error {
 	return s.repo.CallCancelOrder(ctx, orderID, actingUserID)
 }
+
+// StaffOrderRepository is the read side of the order manager's console.
+type StaffOrderRepository interface {
+	GetByIDForStaff(context.Context, int) (*domain.Order, error)
+	ListForStaff(ctx context.Context, status string, page, size int) ([]domain.Order, int, error)
+}
+
+// StaffOrderQueries lets staff find orders — the status-update endpoint is useless without a way to
+// discover which order to update (US-ORDERSTATUS-1). Read-only; writes stay in OrderStatusService.
+type StaffOrderQueries struct{ repo StaffOrderRepository }
+
+func NewStaffOrderQueries(repo StaffOrderRepository) *StaffOrderQueries {
+	return &StaffOrderQueries{repo: repo}
+}
+
+func (q *StaffOrderQueries) GetOrder(ctx context.Context, orderID int) (*domain.Order, error) {
+	return q.repo.GetByIDForStaff(ctx, orderID)
+}
+
+func (q *StaffOrderQueries) ListOrders(ctx context.Context, status string, page, size int) ([]domain.Order, int, error) {
+	return q.repo.ListForStaff(ctx, status, page, size)
+}
+
+// NextStatuses is the forward-only transition table, exported so the UI/API can offer only valid moves.
+func NextStatuses(from string) []string { return slices.Clone(validTransitions[from]) }

@@ -107,14 +107,14 @@ func (r *OrderRepository) GetByID(ctx context.Context, customerID, orderID int) 
 	var estimatedDate time.Time
 	err := r.db.QueryRowContext(ctx, `
 		SELECT o.order_id, o.status, o.subtotal, o.tax_amount, o.delivery_fee, o.total_amount,
-		       o.order_date, d.mode, d.estimated_days, d.estimated_date, p.status
+		       o.order_date, d.mode, d.estimated_days, d.estimated_date, p.status, p.method
 		FROM `+quotedOrderTable+` o
 		JOIN delivery d ON d.order_id = o.order_id
 		JOIN payment p ON p.order_id = o.order_id
 		WHERE o.order_id = ? AND o.customer_id = ?
 	`, orderID, customerID).Scan(
 		&order.ID, &order.Status, &subtotal, &tax, &fee, &total,
-		&order.CreatedAt, &mode, &order.Delivery.EstimatedDays, &estimatedDate, &order.PaymentStatus,
+		&order.CreatedAt, &mode, &order.Delivery.EstimatedDays, &estimatedDate, &order.PaymentStatus, &order.PaymentMethod,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, app.ErrOrderNotFound
@@ -152,7 +152,38 @@ func (r *OrderRepository) GetByID(ctx context.Context, customerID, orderID int) 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("read order %d items: %w", orderID, err)
 	}
+	if order.History, err = r.history(ctx, orderID, false); err != nil {
+		return nil, err
+	}
 	return &order, nil
+}
+
+// history returns the order's status trail oldest-first. withActor adds the staff member's email
+// (staff views only).
+func (r *OrderRepository) history(ctx context.Context, orderID int, withActor bool) ([]orderdomain.StatusEvent, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT h.status, h.changed_at, COALESCE(u.email, '')
+		FROM order_status_history h
+		LEFT JOIN user_account u ON u.user_account_id = h.changed_by_user_id
+		WHERE h.order_id = ?
+		ORDER BY h.changed_at, h.order_status_history_id
+	`, orderID)
+	if err != nil {
+		return nil, fmt.Errorf("list order %d history: %w", orderID, err)
+	}
+	defer rows.Close()
+	events := make([]orderdomain.StatusEvent, 0)
+	for rows.Next() {
+		var e orderdomain.StatusEvent
+		if err := rows.Scan(&e.Status, &e.ChangedAt, &e.ChangedBy); err != nil {
+			return nil, fmt.Errorf("scan order history: %w", err)
+		}
+		if !withActor {
+			e.ChangedBy = ""
+		}
+		events = append(events, e)
+	}
+	return events, rows.Err()
 }
 
 func (r *OrderRepository) ListByCustomer(ctx context.Context, customerID, page, size int) ([]orderdomain.Order, int, error) {
@@ -283,14 +314,15 @@ func (r *OrderRepository) GetByIDForStaff(ctx context.Context, orderID int) (*or
 	var estimatedDate time.Time
 	err := r.db.QueryRowContext(ctx, `
 		SELECT o.order_id, o.status, o.subtotal, o.tax_amount, o.delivery_fee, o.total_amount,
-		       o.order_date, d.mode, d.estimated_days, d.estimated_date, p.status, o.payment_method
+		       o.order_date, d.mode, d.estimated_days, d.estimated_date, p.status, p.method, c.name
 		FROM `+"`order`"+` o
+		JOIN customer c ON c.customer_id = o.customer_id
 		JOIN delivery d ON d.order_id = o.order_id
 		JOIN payment p ON p.order_id = o.order_id
 		WHERE o.order_id = ?
 	`, orderID).Scan(
 		&order.ID, &order.Status, &subtotal, &tax, &fee, &total,
-		&order.CreatedAt, &mode, &order.Delivery.EstimatedDays, &estimatedDate, &order.PaymentStatus, &order.PaymentMethod,
+		&order.CreatedAt, &mode, &order.Delivery.EstimatedDays, &estimatedDate, &order.PaymentStatus, &order.PaymentMethod, &order.CustomerName,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, app.ErrOrderNotFound
@@ -304,7 +336,71 @@ func (r *OrderRepository) GetByIDForStaff(ctx context.Context, orderID int) (*or
 	order.TotalAmount = total
 	order.Delivery.Mode = orderdomain.DeliveryMode(mode)
 	order.Delivery.EstimatedDate = estimatedDate.Format("2006-01-02")
+	order.Items = make([]orderdomain.OrderItem, 0)
+	itemRows, err := r.db.QueryContext(ctx, `
+		SELECT oi.variant_id, COALESCE(p.name, ''), oi.quantity, oi.unit_price_at_order
+		FROM order_item oi
+		JOIN product_variant pv ON pv.variant_id = oi.variant_id
+		JOIN product p ON p.product_id = pv.product_id
+		WHERE oi.order_id = ?
+		ORDER BY oi.order_item_id
+	`, orderID)
+	if err != nil {
+		return nil, fmt.Errorf("list order %d items: %w", orderID, err)
+	}
+	defer itemRows.Close()
+	for itemRows.Next() {
+		var item orderdomain.OrderItem
+		if err := itemRows.Scan(&item.VariantID, &item.ProductName, &item.Quantity, &item.UnitPriceAtOrder); err != nil {
+			return nil, fmt.Errorf("scan order item: %w", err)
+		}
+		order.Items = append(order.Items, item)
+	}
+	if err := itemRows.Err(); err != nil {
+		return nil, fmt.Errorf("read order %d items: %w", orderID, err)
+	}
+	if order.History, err = r.history(ctx, orderID, true); err != nil {
+		return nil, err
+	}
 	return &order, nil
+}
+
+// ListForStaff pages every customer's orders newest-first, optionally filtered by status — the
+// order manager's work queue. Summary rows only (no items/history); the detail call has those.
+func (r *OrderRepository) ListForStaff(ctx context.Context, status string, page, size int) ([]orderdomain.Order, int, error) {
+	where, args := "", []any{}
+	if status != "" {
+		where, args = "WHERE o.status = ?", append(args, status)
+	}
+	var total int
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+quotedOrderTable+` o `+where, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count staff orders: %w", err)
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT o.order_id, o.status, o.total_amount, o.order_date, c.name, p.method, p.status, d.mode, d.estimated_date
+		FROM `+quotedOrderTable+` o
+		JOIN customer c ON c.customer_id = o.customer_id
+		JOIN payment p ON p.order_id = o.order_id
+		JOIN delivery d ON d.order_id = o.order_id
+		`+where+`
+		ORDER BY o.order_date DESC, o.order_id DESC
+		LIMIT ? OFFSET ?`, append(args, size, (page-1)*size)...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list staff orders: %w", err)
+	}
+	defer rows.Close()
+	orders := make([]orderdomain.Order, 0, size)
+	for rows.Next() {
+		var o orderdomain.Order
+		var mode string
+		var est time.Time
+		if err := rows.Scan(&o.ID, &o.Status, &o.TotalAmount, &o.CreatedAt, &o.CustomerName, &o.PaymentMethod, &o.PaymentStatus, &mode, &est); err != nil {
+			return nil, 0, fmt.Errorf("scan staff order: %w", err)
+		}
+		o.Delivery = orderdomain.Delivery{Mode: orderdomain.DeliveryMode(mode), EstimatedDate: est.Format("2006-01-02")}
+		orders = append(orders, o)
+	}
+	return orders, total, rows.Err()
 }
 
 func (r *OrderRepository) SetActingUser(ctx context.Context, tx *sql.Tx, actingUserID int) error {

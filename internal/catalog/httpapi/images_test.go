@@ -48,7 +48,7 @@ func (s imageRepositoryStub) DeleteImage(context.Context, int64, int64) (string,
 func imageTestRouter() chi.Router {
 	r := chi.NewRouter()
 	handler := NewImageHandler(app.NewImageService(imageStorageStub{}, imageRepositoryStub{}))
-	RegisterImageRoutes(r, handler)
+	RegisterImageRoutes(r, handler, auth.RequirePermission("catalog:image:write"))
 	return r
 }
 
@@ -85,7 +85,7 @@ func TestImageConfirmReturnsCreated(t *testing.T) {
 	storage := imageStorageStub{openPayload: pngHTTPFixture(t)}
 	handler := NewImageHandler(app.NewImageService(storage, imageRepositoryStub{}))
 	router := chi.NewRouter()
-	RegisterImageRoutes(router, handler)
+	RegisterImageRoutes(router, handler, auth.RequirePermission("catalog:image:write"))
 	req := authorizedRequest(http.MethodPost, "/api/v1/staff/products/1/images", `{"object_key":"products/1/upload","content_type":"image/png"}`, "catalog:image:write")
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, req)
@@ -106,7 +106,7 @@ func TestImageConfirmMapsInvalidMetadataToBadRequest(t *testing.T) {
 func TestImageDeleteReturnsNoContent(t *testing.T) {
 	router := chi.NewRouter()
 	handler := NewImageHandler(app.NewImageService(imageStorageStub{}, imageRepositoryStub{}))
-	RegisterImageRoutes(router, handler)
+	RegisterImageRoutes(router, handler, auth.RequirePermission("catalog:image:write"))
 	req := authorizedRequest(http.MethodDelete, "/api/v1/staff/products/1/images/9", "", "catalog:image:write")
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, req)
@@ -118,7 +118,7 @@ func TestImageDeleteReturnsNoContent(t *testing.T) {
 func TestImageDeleteMapsNotFound(t *testing.T) {
 	router := chi.NewRouter()
 	handler := NewImageHandler(app.NewImageService(imageStorageStub{}, imageRepositoryStub{deleteErr: domain.ErrNotFound}))
-	RegisterImageRoutes(router, handler)
+	RegisterImageRoutes(router, handler, auth.RequirePermission("catalog:image:write"))
 	req := authorizedRequest(http.MethodDelete, "/api/v1/staff/products/1/images/9", "", "catalog:image:write")
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, req)

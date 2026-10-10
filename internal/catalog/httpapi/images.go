@@ -6,7 +6,6 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"brightbuy-backend/internal/catalog/app"
-	"brightbuy-backend/internal/shared/auth"
 	"brightbuy-backend/internal/shared/httpx"
 )
 
@@ -18,12 +17,14 @@ func NewImageHandler(service *app.ImageService) *ImageHandler {
 	return &ImageHandler{service: service}
 }
 
-func RegisterImageRoutes(r chi.Router, handler *ImageHandler) {
-	r.Route("/api/v1/staff", func(r chi.Router) {
-		r.Use(auth.RequirePermission("catalog:image:write"))
-		r.Post("/products/{productID}/images/upload-url", handler.presignUpload)
-		r.Post("/products/{productID}/images", handler.confirm)
-		r.Delete("/products/{productID}/images/{imageID}", handler.delete)
+// RegisterImageRoutes mounts the image routes; guard authenticates and checks `catalog:image:write`
+// (distinct from catalog:write — AC-ADMINCATALOG-5).
+func RegisterImageRoutes(r chi.Router, handler *ImageHandler, guard func(http.Handler) http.Handler) {
+	r.Group(func(r chi.Router) {
+		r.Use(guard)
+		r.Post("/api/v1/staff/products/{productID}/images/upload-url", handler.presignUpload)
+		r.Post("/api/v1/staff/products/{productID}/images", handler.confirm)
+		r.Delete("/api/v1/staff/products/{productID}/images/{imageID}", handler.delete)
 	})
 }
 

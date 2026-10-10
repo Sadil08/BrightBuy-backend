@@ -10,7 +10,6 @@ import (
 
 	"brightbuy-backend/internal/catalog/app"
 	"brightbuy-backend/internal/catalog/domain"
-	"brightbuy-backend/internal/shared/auth"
 	"brightbuy-backend/internal/shared/httpx"
 )
 
@@ -22,18 +21,21 @@ func NewAdminHandler(service *app.CatalogAdminService) *AdminHandler {
 	return &AdminHandler{service: service}
 }
 
-func RegisterAdminRoutes(r chi.Router, handler *AdminHandler) {
-	r.Route("/api/v1/staff", func(r chi.Router) {
-		r.Use(auth.RequirePermission("catalog:write"))
-		r.Post("/products", handler.createProduct)
-		r.Patch("/products/{productID}", handler.updateProduct)
-		r.Delete("/products/{productID}", handler.deleteProduct)
-		r.Post("/products/{productID}/variants", handler.createVariant)
-		r.Patch("/products/{productID}/variants/{variantID}", handler.updateVariant)
-		r.Delete("/products/{productID}/variants/{variantID}", handler.deleteVariant)
-		r.Post("/categories", handler.createCategory)
-		r.Patch("/categories/{categoryID}", handler.updateCategory)
-		r.Delete("/categories/{categoryID}", handler.deleteCategory)
+// RegisterAdminRoutes mounts the staff catalogue routes. guard authenticates the caller and checks
+// `catalog:write` (composed in main.go, like inventory's). Full paths are registered on r instead of
+// r.Route("/api/v1/staff"), because chi panics if two modules each mount the same prefix.
+func RegisterAdminRoutes(r chi.Router, handler *AdminHandler, guard func(http.Handler) http.Handler) {
+	r.Group(func(r chi.Router) {
+		r.Use(guard)
+		r.Post("/api/v1/staff/products", handler.createProduct)
+		r.Patch("/api/v1/staff/products/{productID}", handler.updateProduct)
+		r.Delete("/api/v1/staff/products/{productID}", handler.deleteProduct)
+		r.Post("/api/v1/staff/products/{productID}/variants", handler.createVariant)
+		r.Patch("/api/v1/staff/products/{productID}/variants/{variantID}", handler.updateVariant)
+		r.Delete("/api/v1/staff/products/{productID}/variants/{variantID}", handler.deleteVariant)
+		r.Post("/api/v1/staff/categories", handler.createCategory)
+		r.Patch("/api/v1/staff/categories/{categoryID}", handler.updateCategory)
+		r.Delete("/api/v1/staff/categories/{categoryID}", handler.deleteCategory)
 	})
 }
 

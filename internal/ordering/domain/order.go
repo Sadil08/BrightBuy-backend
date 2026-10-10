@@ -40,6 +40,14 @@ type Delivery struct {
 	EstimatedDays int          `json:"estimatedDays"`
 }
 
+// StatusEvent is one row of an order's audit trail (order_status_history, REQ-8.5). ChangedBy is only
+// filled for staff views — customers see what happened and when, never which employee did it.
+type StatusEvent struct {
+	Status    Status    `json:"status"`
+	ChangedAt time.Time `json:"changedAt"`
+	ChangedBy string    `json:"changedBy,omitempty"`
+}
+
 type Order struct {
 	ID            int           `json:"orderId"`
 	Status        Status        `json:"status"`
@@ -52,6 +60,8 @@ type Order struct {
 	PaymentMethod PaymentMethod `json:"paymentMethod"`
 	PaymentStatus PaymentStatus `json:"paymentStatus"`
 	CreatedAt     time.Time     `json:"createdAt"`
+	CustomerName  string        `json:"customerName,omitempty"` // staff views only
+	History       []StatusEvent `json:"history,omitempty"`
 }
 
 type UnavailableLine struct {
