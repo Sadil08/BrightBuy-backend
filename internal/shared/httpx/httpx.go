@@ -6,6 +6,7 @@
 package httpx
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"net/http"
 )
@@ -30,6 +31,23 @@ func WriteJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// WriteCSV writes header and rows as a CSV attachment. A report with zero rows still yields a
+// valid file containing just the header (09-management-reporting plan.md §6).
+func WriteCSV(w http.ResponseWriter, filename string, header []string, rows [][]string) error {
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+	w.WriteHeader(http.StatusOK)
+	cw := csv.NewWriter(w)
+	if err := cw.Write(header); err != nil {
+		return err
+	}
+	if err := cw.WriteAll(rows); err != nil {
+		return err
+	}
+	cw.Flush()
+	return cw.Error()
 }
 
 // WriteError writes the standard error shape. code is a short machine-readable token

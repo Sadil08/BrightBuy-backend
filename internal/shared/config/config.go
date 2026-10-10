@@ -23,6 +23,9 @@ type Config struct {
 	DatabaseDSN string
 	// JWTSigningKey signs and verifies access/refresh tokens (specs/global/02_SECURITY_BASELINE.md §2).
 	JWTSigningKey string
+	// ReportingDSN is the optional read-only credential (brightbuy_reporting) for the reporting
+	// module's own pool (SEC-REPORTING-1). When empty, reporting reuses the main pool.
+	ReportingDSN string
 	// S3 settings configure the S3-compatible object store used for catalog images.
 	S3EndpointURL string
 	S3AccessKey   string
@@ -39,6 +42,7 @@ func Load() (*Config, error) {
 		Env:           getEnv("APP_ENV", "local"),
 		DatabaseDSN:   os.Getenv("DB_DSN"),
 		JWTSigningKey: os.Getenv("JWT_SIGNING_KEY"),
+		ReportingDSN:  os.Getenv("REPORTING_DB_DSN"),
 		S3EndpointURL: os.Getenv("S3_ENDPOINT_URL"),
 		S3AccessKey:   getEnv("S3_ACCESS_KEY", "devaccesskey"),
 		S3SecretKey:   getEnv("S3_SECRET_KEY", "devsecretkey"),

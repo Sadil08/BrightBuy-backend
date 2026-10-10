@@ -44,6 +44,9 @@ import (
 	inventoryapp "brightbuy-backend/internal/inventory/app"
 	inventoryhttp "brightbuy-backend/internal/inventory/httpapi"
 	inventorymysql "brightbuy-backend/internal/inventory/mysql"
+	reportingapp "brightbuy-backend/internal/reporting/app"
+	reportinghttp "brightbuy-backend/internal/reporting/httpapi"
+	reportingmysql "brightbuy-backend/internal/reporting/mysql"
 
 	deliveryapp "brightbuy-backend/internal/delivery/app"
 	deliveryhttp "brightbuy-backend/internal/delivery/httpapi"
@@ -225,6 +228,24 @@ func main() {
 		imageService := catalogapp.NewImageService(imageStorage, imageRepository)
 		cataloghttp.RegisterImageRoutes(r, cataloghttp.NewImageHandler(imageService))
 	}
+
+	// 09-management-reporting — read-only views behind reports:view (MANAGER). With
+	// REPORTING_DB_DSN set it uses its own narrow brightbuy_reporting pool (SEC-REPORTING-1).
+	var reportingRepository *reportingmysql.Repository
+	if cfg.ReportingDSN != "" {
+		reportingRepository, err = reportingmysql.NewRepository(cfg.ReportingDSN)
+		if err != nil {
+			logger.Error("reporting database setup failed", "error", err)
+			os.Exit(1)
+		}
+		defer reportingRepository.Close()
+	} else {
+		reportingRepository = reportingmysql.NewRepositoryFromDB(db)
+	}
+	requireReportsView := func(next http.Handler) http.Handler {
+		return auth.Authenticate(tokenIssuer)(auth.RequirePermission("reports:view")(next))
+	}
+	reportinghttp.RegisterRoutes(r, reportinghttp.NewHandler(reportingapp.NewService(reportingRepository)), requireReportsView)
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,
