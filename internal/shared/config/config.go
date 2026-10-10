@@ -23,6 +23,11 @@ type Config struct {
 	DatabaseDSN string
 	// JWTSigningKey signs and verifies access/refresh tokens (specs/global/02_SECURITY_BASELINE.md §2).
 	JWTSigningKey string
+	// S3 settings configure the S3-compatible object store used for catalog images.
+	S3EndpointURL string
+	S3AccessKey   string
+	S3SecretKey   string
+	S3Bucket      string
 }
 
 // Load reads the environment and returns a populated Config, or an error if something required
@@ -34,6 +39,10 @@ func Load() (*Config, error) {
 		Env:           getEnv("APP_ENV", "local"),
 		DatabaseDSN:   os.Getenv("DB_DSN"),
 		JWTSigningKey: os.Getenv("JWT_SIGNING_KEY"),
+		S3EndpointURL: os.Getenv("S3_ENDPOINT_URL"),
+		S3AccessKey:   getEnv("S3_ACCESS_KEY", "devaccesskey"),
+		S3SecretKey:   getEnv("S3_SECRET_KEY", "devsecretkey"),
+		S3Bucket:      getEnv("S3_BUCKET", "brightbuy-images"),
 	}
 
 	if cfg.DatabaseDSN == "" {

@@ -31,7 +31,6 @@ import (
 	identityhttp "brightbuy-backend/internal/identity/httpapi"
 	identitymysql "brightbuy-backend/internal/identity/mysql"
 	"brightbuy-backend/internal/shared/auth"
-
 	"brightbuy-backend/internal/shared/config"
 	"brightbuy-backend/internal/shared/dbx"
 	"brightbuy-backend/internal/shared/logging"
@@ -170,12 +169,22 @@ func main() {
 		},
 	)
 	orderHandler := orderhttp.NewHandler(checkoutService)
+	paymentRepo := ordermysql.NewPaymentRepository()
+	orderStatusService := orderapp.NewOrderStatusService(
+		orderRepo,
+		paymentRepo,
+		func(ctx context.Context, fn func(*sql.Tx) error) error {
+			return dbx.WithTx(ctx, db, fn)
+		},
+	)
+	staffOrderHandler := orderhttp.NewStaffHandler(orderStatusService)
 
 	r.Route("/api/v1", func(apiRouter chi.Router) {
 		cataloghttp.RegisterRoutes(apiRouter, catalogHandler)
 		identityhttp.RegisterRoutes(apiRouter, authHandler, adminHandler, tokenIssuer, registerIPLimiter, loginIPLimiter)
 		carthttp.RegisterRoutes(apiRouter, cartHandler, tokenIssuer)
 		orderhttp.RegisterRoutes(apiRouter, orderHandler, tokenIssuer)
+		orderhttp.RegisterStaffRoutes(apiRouter, staffOrderHandler, tokenIssuer)
 	})
 
 	deliveryRepository := deliverymysql.NewRepository(db)
@@ -201,6 +210,21 @@ func main() {
 		return auth.Authenticate(tokenIssuer)(auth.RequirePermission("stock:adjust")(next))
 	}
 	inventoryhttp.RegisterRoutes(r, inventoryHandler, requireStockAdjust)
+
+	// 07-admin-catalog — staff catalogue management and image administration.
+	catalogAdminRepository := catalogmysql.NewRepository(db)
+	catalogAdminService := catalogapp.NewCatalogAdminService(catalogAdminRepository, nil)
+	cataloghttp.RegisterAdminRoutes(r, cataloghttp.NewAdminHandler(catalogAdminService))
+	if cfg.S3EndpointURL != "" {
+		imageStorage, err := catalogmysql.NewImageStorage(cfg.S3EndpointURL, cfg.S3AccessKey, cfg.S3SecretKey, cfg.S3Bucket)
+		if err != nil {
+			logger.Error("image storage setup failed", "error", err)
+			os.Exit(1)
+		}
+		imageRepository := catalogmysql.NewImageRepository(db)
+		imageService := catalogapp.NewImageService(imageStorage, imageRepository)
+		cataloghttp.RegisterImageRoutes(r, cataloghttp.NewImageHandler(imageService))
+	}
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,
