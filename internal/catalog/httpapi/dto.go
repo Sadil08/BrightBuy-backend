@@ -11,7 +11,15 @@ type ProductDTO struct {
 	Description string        `json:"description"`
 	Categories  []CategoryDTO `json:"categories"`
 	Variants    []VariantDTO  `json:"variants"`
-	//add image field later
+	Images      []ImageDTO    `json:"images"`
+}
+
+// ImageDTO matches openapi ProductImage. The first image is primary; order is upload order.
+type ImageDTO struct {
+	ImageID   int64  `json:"imageId"`
+	URL       string `json:"url"`
+	SortOrder int    `json:"sortOrder"`
+	IsPrimary bool   `json:"isPrimary"`
 }
 
 type CategoryDTO struct {

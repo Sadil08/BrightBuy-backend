@@ -120,7 +120,7 @@ func main() {
 	productRepo := catalogmysql.NewProductRepository(db)
 	categoryRepo := catalogmysql.NewCategoryRepository(db)
 	catalogService := catalogapp.NewCatalogService(productRepo, categoryRepo)
-	catalogHandler := cataloghttp.NewCatalogHandler(catalogService)
+	catalogHandler := cataloghttp.NewCatalogHandler(catalogService).WithImageBaseURL(cfg.S3PublicURL)
 
 	// r.Route groups a set of routes under a shared path prefix ("/api/v1") without those routes
 	// needing to know that prefix exists — RegisterRoutes itself just registers "/categories",

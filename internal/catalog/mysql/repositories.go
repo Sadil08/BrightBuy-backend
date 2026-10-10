@@ -40,8 +40,8 @@ func (r *Repository) CreateProduct(ctx context.Context, product app.AdminProduct
 			}
 		}
 		for _, variant := range variants {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO product_variant (product_id, sku, price, stock_quantity, is_active) VALUES (?, ?, ?, ?, TRUE)`, id, variant.SKU, centsToDecimal(variant.PriceCents), variant.StockQuantity); err != nil {
-				return mapDBError(err)
+			if _, err := insertVariantTx(ctx, tx, id, variant); err != nil {
+				return err
 			}
 		}
 		return nil
@@ -79,13 +79,41 @@ func (r *Repository) SetProductActive(ctx context.Context, id int64, active bool
 }
 
 func (r *Repository) CreateVariant(ctx context.Context, productID int64, input app.VariantInput) (variant app.AdminVariant, err error) {
-	result, err := r.db.ExecContext(ctx, `INSERT INTO product_variant (product_id, sku, price, stock_quantity, is_active) VALUES (?, ?, ?, ?, TRUE)`, productID, input.SKU, centsToDecimal(input.PriceCents), input.StockQuantity)
+	err = dbx.WithTx(ctx, r.db, func(tx *sql.Tx) error {
+		variant, err = insertVariantTx(ctx, tx, productID, input)
+		return err
+	})
+	return variant, err
+}
+
+// insertVariantTx writes the variant row and its attributes (attribute_name / attribute_value are
+// shared lookup rows, created on first use) inside the caller's transaction.
+func insertVariantTx(ctx context.Context, tx *sql.Tx, productID int64, input app.VariantInput) (app.AdminVariant, error) {
+	result, err := tx.ExecContext(ctx, `INSERT INTO product_variant (product_id, sku, price, stock_quantity, is_active) VALUES (?, ?, ?, ?, TRUE)`, productID, strings.TrimSpace(input.SKU), centsToDecimal(input.PriceCents), input.StockQuantity)
 	if err != nil {
 		return app.AdminVariant{}, mapDBError(err)
 	}
-	variant = app.AdminVariant{ProductID: productID, SKU: input.SKU, PriceCents: input.PriceCents, StockQuantity: input.StockQuantity, Active: true}
-	variant.ID, err = result.LastInsertId()
-	return variant, err
+	variant := app.AdminVariant{ProductID: productID, SKU: input.SKU, PriceCents: input.PriceCents, StockQuantity: input.StockQuantity, Active: true}
+	if variant.ID, err = result.LastInsertId(); err != nil {
+		return app.AdminVariant{}, err
+	}
+	for _, attr := range input.Attributes {
+		name, value := strings.TrimSpace(attr.Name), strings.TrimSpace(attr.Value)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO attribute_name (name) VALUES (?) ON DUPLICATE KEY UPDATE attribute_name_id = LAST_INSERT_ID(attribute_name_id)`, name); err != nil {
+			return app.AdminVariant{}, err
+		}
+		var nameID int64
+		if err := tx.QueryRowContext(ctx, `SELECT attribute_name_id FROM attribute_name WHERE name = ?`, name).Scan(&nameID); err != nil {
+			return app.AdminVariant{}, err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO attribute_value (attribute_name_id, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE attribute_value_id = attribute_value_id`, nameID, value); err != nil {
+			return app.AdminVariant{}, err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT IGNORE INTO variant_attribute (variant_id, attribute_value_id) SELECT ?, attribute_value_id FROM attribute_value WHERE attribute_name_id = ? AND value = ?`, variant.ID, nameID, value); err != nil {
+			return app.AdminVariant{}, err
+		}
+	}
+	return variant, nil
 }
 
 func (r *Repository) UpdateVariant(ctx context.Context, id int64, patch app.VariantPatch) error {

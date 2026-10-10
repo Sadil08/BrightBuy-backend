@@ -8,10 +8,17 @@ import (
 	"brightbuy-backend/internal/catalog/domain"
 )
 
+// VariantAttribute is one name/value pair (e.g. Colour = Black) attached to a variant.
+type VariantAttribute struct {
+	Name  string
+	Value string
+}
+
 type VariantInput struct {
-	SKU           string `json:"sku"`
-	PriceCents    int64  `json:"price_cents"`
-	StockQuantity int    `json:"stock_quantity"`
+	Attributes    []VariantAttribute `json:"attributes,omitempty"`
+	SKU           string             `json:"sku"`
+	PriceCents    int64              `json:"price_cents"`
+	StockQuantity int                `json:"stock_quantity"`
 }
 
 type ProductInput struct {
@@ -201,6 +208,11 @@ func validateProduct(input ProductInput) error {
 func validateVariant(input VariantInput) error {
 	if strings.TrimSpace(input.SKU) == "" || input.PriceCents < 0 || input.StockQuantity < 0 {
 		return fmt.Errorf("%w: SKU, price, and stock are invalid", domain.ErrValidation)
+	}
+	for _, a := range input.Attributes {
+		if strings.TrimSpace(a.Name) == "" || strings.TrimSpace(a.Value) == "" {
+			return fmt.Errorf("%w: attribute name and value are required", domain.ErrValidation)
+		}
 	}
 	return nil
 }

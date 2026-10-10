@@ -11,6 +11,7 @@ import (
 	"brightbuy-backend/internal/catalog/app"
 	"brightbuy-backend/internal/catalog/domain"
 	"brightbuy-backend/internal/shared/httpx"
+	"brightbuy-backend/internal/shared/money"
 )
 
 type AdminHandler struct {
@@ -40,16 +41,16 @@ func RegisterAdminRoutes(r chi.Router, handler *AdminHandler, guard func(http.Ha
 }
 
 func (h *AdminHandler) createProduct(w http.ResponseWriter, r *http.Request) {
-	var input app.ProductInput
-	if !decode(w, r, &input) {
+	var request productCreateRequest
+	if !decode(w, r, &request) {
 		return
 	}
-	product, err := h.service.CreateProduct(r.Context(), input)
+	product, err := h.service.CreateProduct(r.Context(), request.toInput())
 	if err != nil {
 		writeServiceError(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusCreated, product)
+	httpx.WriteJSON(w, http.StatusCreated, adminProductResponse{ProductID: product.ID, Name: product.Name, Description: product.Description, Active: product.Active})
 }
 
 func (h *AdminHandler) updateProduct(w http.ResponseWriter, r *http.Request) {
@@ -57,11 +58,11 @@ func (h *AdminHandler) updateProduct(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var patch app.ProductPatch
-	if !decode(w, r, &patch) {
+	var request productPatchRequest
+	if !decode(w, r, &request) {
 		return
 	}
-	if err := h.service.UpdateProduct(r.Context(), id, patch); err != nil {
+	if err := h.service.UpdateProduct(r.Context(), id, app.ProductPatch{Name: request.Name, Description: request.Description}); err != nil {
 		writeServiceError(w, err)
 		return
 	}
@@ -85,16 +86,16 @@ func (h *AdminHandler) createVariant(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var input app.VariantInput
-	if !decode(w, r, &input) {
+	var request variantCreateRequest
+	if !decode(w, r, &request) {
 		return
 	}
-	variant, err := h.service.CreateVariant(r.Context(), productID, input)
+	variant, err := h.service.CreateVariant(r.Context(), productID, request.toInput())
 	if err != nil {
 		writeServiceError(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusCreated, variant)
+	httpx.WriteJSON(w, http.StatusCreated, adminVariantResponse{VariantID: variant.ID, ProductID: variant.ProductID, SKU: variant.SKU, Price: money.FromCents(variant.PriceCents), Active: variant.Active})
 }
 
 func (h *AdminHandler) updateVariant(w http.ResponseWriter, r *http.Request) {
@@ -102,9 +103,14 @@ func (h *AdminHandler) updateVariant(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var patch app.VariantPatch
-	if !decode(w, r, &patch) {
+	var request variantPatchRequest
+	if !decode(w, r, &request) {
 		return
+	}
+	patch := app.VariantPatch{}
+	if request.Price != nil {
+		cents := request.Price.Cents()
+		patch.PriceCents = &cents
 	}
 	if err := h.service.UpdateVariant(r.Context(), id, patch); err != nil {
 		writeServiceError(w, err)
@@ -126,16 +132,23 @@ func (h *AdminHandler) deleteVariant(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AdminHandler) createCategory(w http.ResponseWriter, r *http.Request) {
-	var input app.CategoryInput
-	if !decode(w, r, &input) {
+	var request categoryRequest
+	if !decode(w, r, &request) {
 		return
+	}
+	input := app.CategoryInput{}
+	if request.Name != nil {
+		input.Name = *request.Name
+	}
+	if request.Description != nil {
+		input.Description = *request.Description
 	}
 	category, err := h.service.CreateCategory(r.Context(), input)
 	if err != nil {
 		writeServiceError(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusCreated, category)
+	httpx.WriteJSON(w, http.StatusCreated, adminCategoryResponse{CategoryID: category.ID, Name: category.Name, Description: category.Description, Active: category.Active})
 }
 
 func (h *AdminHandler) updateCategory(w http.ResponseWriter, r *http.Request) {
@@ -143,11 +156,11 @@ func (h *AdminHandler) updateCategory(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var patch app.CategoryPatch
-	if !decode(w, r, &patch) {
+	var request categoryRequest
+	if !decode(w, r, &request) {
 		return
 	}
-	if err := h.service.UpdateCategory(r.Context(), id, patch); err != nil {
+	if err := h.service.UpdateCategory(r.Context(), id, app.CategoryPatch{Name: request.Name, Description: request.Description}); err != nil {
 		writeServiceError(w, err)
 		return
 	}

@@ -14,6 +14,7 @@ type Product struct {
 	Description string
 	Categories  []Category
 	Variants    []Variant
+	Images      []ProductImage // oldest first; the first is the primary image
 	// UpdatedAt is the most recent change to EITHER this product's own row OR any of its variants'
 	// rows (whichever is later) — see mysql.ProductRepository.GetByID. It exists for exactly one
 	// reason: httpapi derives a weak ETag from it (plan.md §1) for the product-detail endpoint. It's
@@ -21,4 +22,11 @@ type Product struct {
 	// products has no single natural "last modified" moment to key a collection ETag off of), so a
 	// Product returned from List always has UpdatedAt at its zero value.
 	UpdatedAt time.Time
+}
+
+// ProductImage is a stored image's public face; the URL is derived from ObjectKey at the HTTP edge,
+// so the domain never learns where the object store lives.
+type ProductImage struct {
+	ID        int64
+	ObjectKey string
 }

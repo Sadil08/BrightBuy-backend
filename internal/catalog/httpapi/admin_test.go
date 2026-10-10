@@ -89,7 +89,7 @@ func TestAdminRoutesRequireCatalogWritePermission(t *testing.T) {
 }
 
 func TestCreateProductReturnsCreated(t *testing.T) {
-	req := authorizedRequest(http.MethodPost, "/api/v1/staff/products", `{"name":"Phone","category_ids":[1],"variants":[{"sku":"PHONE-1","price_cents":100}]}`, "catalog:write")
+	req := authorizedRequest(http.MethodPost, "/api/v1/staff/products", `{"name":"Phone","categoryIds":[1],"variants":[{"sku":"PHONE-1","price":"1.00","openingStock":3}]}`, "catalog:write")
 	response := httptest.NewRecorder()
 	adminTestRouter(&catalogRepositoryStub{}).ServeHTTP(response, req)
 	if response.Code != http.StatusCreated {
@@ -107,7 +107,7 @@ func TestAdminHandlerMapsValidationConflictAndNotFound(t *testing.T) {
 		wantStatus int
 	}{
 		{"invalid JSON", http.MethodPost, "/api/v1/staff/categories", "{", &catalogRepositoryStub{}, http.StatusBadRequest},
-		{"SKU conflict", http.MethodPost, "/api/v1/staff/products/1/variants", `{"sku":"DUP","price_cents":100}`, &catalogRepositoryStub{createVariantErr: domain.ErrSKUConflict}, http.StatusConflict},
+		{"SKU conflict", http.MethodPost, "/api/v1/staff/products/1/variants", `{"sku":"DUP","price":"1.00","openingStock":0}`, &catalogRepositoryStub{createVariantErr: domain.ErrSKUConflict}, http.StatusConflict},
 		{"not found", http.MethodDelete, "/api/v1/staff/products/99", "", &catalogRepositoryStub{productErr: domain.ErrNotFound}, http.StatusNotFound},
 	}
 	for _, testCase := range tests {

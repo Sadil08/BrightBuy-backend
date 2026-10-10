@@ -9,6 +9,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 )
 
 // Config is a plain struct, not a singleton — it gets constructed once in main() and threaded
@@ -31,6 +32,9 @@ type Config struct {
 	S3AccessKey   string
 	S3SecretKey   string
 	S3Bucket      string
+	// S3PublicURL is the public base product-image object keys are served from (a CDN in production,
+	// the bucket URL locally). Defaults to <S3_ENDPOINT_URL>/<S3_BUCKET>.
+	S3PublicURL string
 }
 
 // Load reads the environment and returns a populated Config, or an error if something required
@@ -48,6 +52,8 @@ func Load() (*Config, error) {
 		S3SecretKey:   getEnv("S3_SECRET_KEY", "devsecretkey"),
 		S3Bucket:      getEnv("S3_BUCKET", "brightbuy-images"),
 	}
+
+	cfg.S3PublicURL = getEnv("S3_PUBLIC_URL", strings.TrimRight(cfg.S3EndpointURL, "/")+"/"+cfg.S3Bucket)
 
 	if cfg.DatabaseDSN == "" {
 		return nil, fmt.Errorf("DB_DSN environment variable is required")

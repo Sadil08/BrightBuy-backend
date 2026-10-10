@@ -93,8 +93,13 @@ func toCategoryDTOs(categories []domain.Category) []CategoryDTO {
 // toProductDTO converts a full domain.Product — as returned by CatalogService.GetProduct, the
 // product-DETAIL use case — into the shape GET /products/{productId} promises. Nothing is computed
 // here; Categories and Variants are just converted element-by-element via the two helpers above.
-func toProductDTO(p domain.Product) ProductDTO {
+func toProductDTO(p domain.Product, imageBaseURL string) ProductDTO {
+	images := make([]ImageDTO, 0, len(p.Images))
+	for i, img := range p.Images {
+		images = append(images, ImageDTO{ImageID: img.ID, URL: imageBaseURL + "/" + img.ObjectKey, SortOrder: i, IsPrimary: i == 0})
+	}
 	return ProductDTO{
+		Images:      images,
 		ProductID:   p.ID,
 		Name:        p.Name,
 		Description: p.Description,

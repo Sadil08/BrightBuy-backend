@@ -176,6 +176,15 @@ func (r *ProductRepository) GetByID(ctx context.Context, id int) (*domain.Produc
 	}
 	product.Variants = variants
 
+	images, imagesMaxCreatedAt, err := r.selectImagesForProduct(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	product.Images = images
+	if imagesMaxCreatedAt.After(product.UpdatedAt) {
+		product.UpdatedAt = imagesMaxCreatedAt // an upload must bust the weak ETag too
+	}
+
 	// product.UpdatedAt starts as the product row's own timestamp (set in selectProduct below); a
 	// variant changing price/stock more recently than the product row itself was last touched
 	// should ALSO count as "this detail view changed" for ETag purposes (a stock_quantity update
@@ -352,4 +361,27 @@ func stockStatusFrom(inStock bool) domain.StockStatus {
 		return domain.InStock
 	}
 	return domain.OutOfStock
+}
+
+// selectImagesForProduct returns the product's images oldest-first plus the newest created_at (for the ETag).
+func (r *ProductRepository) selectImagesForProduct(ctx context.Context, id int) ([]domain.ProductImage, time.Time, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT image_id, object_key, created_at FROM product_image WHERE product_id = ? ORDER BY image_id`, id)
+	if err != nil {
+		return nil, time.Time{}, fmt.Errorf("mysql: list images for product %d: %w", id, err)
+	}
+	defer rows.Close()
+	images := []domain.ProductImage{}
+	var newest time.Time
+	for rows.Next() {
+		var img domain.ProductImage
+		var created time.Time
+		if err := rows.Scan(&img.ID, &img.ObjectKey, &created); err != nil {
+			return nil, time.Time{}, fmt.Errorf("mysql: scan image: %w", err)
+		}
+		if created.After(newest) {
+			newest = created
+		}
+		images = append(images, img)
+	}
+	return images, newest, rows.Err()
 }
