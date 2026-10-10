@@ -1,0 +1,241 @@
+package mysql
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"time"
+
+	"brightbuy-backend/internal/reporting/app"
+)
+
+type Repository struct {
+	db *sql.DB
+}
+
+// NewRepository opens the reporting-only connection pool. It must use the
+// brightbuy_reporting credential, which is granted SELECT only on the five views.
+func NewRepository(dsn string) (*Repository, error) {
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("reporting db open: %w", err)
+	}
+	db.SetMaxOpenConns(3)
+	db.SetMaxIdleConns(3)
+	db.SetConnMaxLifetime(5 * time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := db.PingContext(ctx); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("reporting db ping: %w", err)
+	}
+	return &Repository{db: db}, nil
+}
+
+// NewRepositoryFromDB is useful for unit/integration tests that provide their own pool.
+func NewRepositoryFromDB(db *sql.DB) *Repository {
+	return &Repository{db: db}
+}
+
+func (r *Repository) Close() error {
+	return r.db.Close()
+}
+
+func (r *Repository) QuarterlySales(ctx context.Context, year int) ([]app.QuarterlySalesRow, error) {
+	const query = `
+SELECT report_year, report_quarter, CAST(COALESCE(SUM(sales_value), 0) AS CHAR)
+FROM vw_quarterly_sales
+WHERE report_year = ?
+GROUP BY report_year, report_quarter
+ORDER BY report_quarter`
+
+	rows, err := r.db.QueryContext(ctx, query, year)
+	if err != nil {
+		return nil, fmt.Errorf("quarterly sales query: %w", err)
+	}
+	defer rows.Close()
+
+	result := make([]app.QuarterlySalesRow, 0, 4)
+	for rows.Next() {
+		var item app.QuarterlySalesRow
+		if err := rows.Scan(&item.Year, &item.Quarter, &item.SalesValue); err != nil {
+			return nil, fmt.Errorf("quarterly sales scan: %w", err)
+		}
+		result = append(result, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("quarterly sales rows: %w", err)
+	}
+	return result, nil
+}
+
+func (r *Repository) TopSellingProducts(ctx context.Context, dateRange *app.DateRange, limit int) ([]app.TopSellingProductRow, error) {
+	query := `
+SELECT product_id,
+       product_name,
+       SUM(quantity_sold) AS quantity_sold,
+       CAST(COALESCE(SUM(line_revenue), 0) AS CHAR) AS revenue
+FROM vw_top_selling_products`
+	args := make([]any, 0, 3)
+	if dateRange != nil {
+		query += ` WHERE order_date >= ? AND order_date < ?`
+		args = append(args, dateRange.From, dateRange.To)
+	}
+	query += `
+GROUP BY product_id, product_name
+ORDER BY quantity_sold DESC, revenue DESC, product_id ASC
+LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("top selling products query: %w", err)
+	}
+	defer rows.Close()
+
+	result := make([]app.TopSellingProductRow, 0)
+	for rows.Next() {
+		var item app.TopSellingProductRow
+		if err := rows.Scan(&item.ProductID, &item.ProductName, &item.Quantity, &item.Revenue); err != nil {
+			return nil, fmt.Errorf("top selling products scan: %w", err)
+		}
+		result = append(result, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("top selling products rows: %w", err)
+	}
+	return result, nil
+}
+
+func (r *Repository) CategoryWiseOrders(ctx context.Context, dateRange *app.DateRange) ([]app.CategoryOrderCount, error) {
+	query := `
+SELECT category_id, category_name, COUNT(*) AS order_count
+FROM vw_category_wise_orders`
+	args := make([]any, 0, 2)
+	if dateRange != nil {
+		query += ` WHERE order_date >= ? AND order_date < ?`
+		args = append(args, dateRange.From, dateRange.To)
+	}
+	query += `
+GROUP BY category_id, category_name
+ORDER BY order_count DESC, category_name ASC`
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("category-wise orders query: %w", err)
+	}
+	defer rows.Close()
+
+	result := make([]app.CategoryOrderCount, 0)
+	for rows.Next() {
+		var item app.CategoryOrderCount
+		if err := rows.Scan(&item.CategoryID, &item.Name, &item.OrderCount); err != nil {
+			return nil, fmt.Errorf("category-wise orders scan: %w", err)
+		}
+		result = append(result, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("category-wise orders rows: %w", err)
+	}
+	return result, nil
+}
+
+func (r *Repository) UpcomingDeliveries(ctx context.Context) ([]app.UpcomingDeliveryRow, error) {
+	const query = `
+SELECT order_id,
+       customer_name,
+       customer_email,
+       delivery_mode,
+       address,
+       estimated_date,
+       order_status
+FROM vw_upcoming_deliveries
+ORDER BY estimated_date ASC, order_id ASC`
+
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("upcoming deliveries query: %w", err)
+	}
+	defer rows.Close()
+
+	result := make([]app.UpcomingDeliveryRow, 0)
+	for rows.Next() {
+		var item app.UpcomingDeliveryRow
+		var address sql.NullString
+		if err := rows.Scan(
+			&item.OrderID,
+			&item.CustomerName,
+			&item.CustomerEmail,
+			&item.DeliveryMode,
+			&address,
+			&item.EstimatedDate,
+			&item.OrderStatus,
+		); err != nil {
+			return nil, fmt.Errorf("upcoming deliveries scan: %w", err)
+		}
+		if address.Valid {
+			item.Address = address.String
+		}
+		result = append(result, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("upcoming deliveries rows: %w", err)
+	}
+	return result, nil
+}
+
+func (r *Repository) CustomerOrderPayments(ctx context.Context, dateRange *app.DateRange, customerID *int64) ([]app.CustomerOrderPaymentRow, error) {
+	query := `
+SELECT customer_id,
+       customer_name,
+       customer_email,
+       order_id,
+       order_date,
+       order_status,
+       CAST(sales_value AS CHAR),
+       payment_method,
+       payment_status,
+       CAST(payment_amount AS CHAR)
+FROM vw_customer_order_summary
+WHERE 1 = 1`
+	args := make([]any, 0, 3)
+	if dateRange != nil {
+		query += ` AND order_date >= ? AND order_date < ?`
+		args = append(args, dateRange.From, dateRange.To)
+	}
+	if customerID != nil {
+		query += ` AND customer_id = ?`
+		args = append(args, *customerID)
+	}
+	query += ` ORDER BY customer_name ASC, order_date DESC, order_id DESC`
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("customer order payment query: %w", err)
+	}
+	defer rows.Close()
+
+	result := make([]app.CustomerOrderPaymentRow, 0)
+	for rows.Next() {
+		var item app.CustomerOrderPaymentRow
+		if err := rows.Scan(
+			&item.CustomerID,
+			&item.CustomerName,
+			&item.CustomerEmail,
+			&item.OrderID,
+			&item.OrderDate,
+			&item.OrderStatus,
+			&item.SalesValue,
+			&item.PaymentMethod,
+			&item.PaymentStatus,
+			&item.PaymentAmount,
+		); err != nil {
+			return nil, fmt.Errorf("customer order payment scan: %w", err)
+		}
+		result = append(result, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("customer order payment rows: %w", err)
+	}
+	return result, nil
+}

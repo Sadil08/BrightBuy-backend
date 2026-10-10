@@ -31,7 +31,6 @@ import (
 	identityhttp "brightbuy-backend/internal/identity/httpapi"
 	identitymysql "brightbuy-backend/internal/identity/mysql"
 	"brightbuy-backend/internal/shared/auth"
-
 	"brightbuy-backend/internal/shared/config"
 	"brightbuy-backend/internal/shared/dbx"
 	"brightbuy-backend/internal/shared/logging"
@@ -45,6 +44,9 @@ import (
 	inventoryapp "brightbuy-backend/internal/inventory/app"
 	inventoryhttp "brightbuy-backend/internal/inventory/httpapi"
 	inventorymysql "brightbuy-backend/internal/inventory/mysql"
+	reportingapp "brightbuy-backend/internal/reporting/app"
+	reportinghttp "brightbuy-backend/internal/reporting/httpapi"
+	reportingmysql "brightbuy-backend/internal/reporting/mysql"
 
 	deliveryapp "brightbuy-backend/internal/delivery/app"
 	deliveryhttp "brightbuy-backend/internal/delivery/httpapi"
@@ -118,7 +120,7 @@ func main() {
 	productRepo := catalogmysql.NewProductRepository(db)
 	categoryRepo := catalogmysql.NewCategoryRepository(db)
 	catalogService := catalogapp.NewCatalogService(productRepo, categoryRepo)
-	catalogHandler := cataloghttp.NewCatalogHandler(catalogService)
+	catalogHandler := cataloghttp.NewCatalogHandler(catalogService).WithImageBaseURL(cfg.S3PublicURL)
 
 	// r.Route groups a set of routes under a shared path prefix ("/api/v1") without those routes
 	// needing to know that prefix exists — RegisterRoutes itself just registers "/categories",
@@ -170,12 +172,22 @@ func main() {
 		},
 	)
 	orderHandler := orderhttp.NewHandler(checkoutService)
+	paymentRepo := ordermysql.NewPaymentRepository()
+	orderStatusService := orderapp.NewOrderStatusService(
+		orderRepo,
+		paymentRepo,
+		func(ctx context.Context, fn func(*sql.Tx) error) error {
+			return dbx.WithTx(ctx, db, fn)
+		},
+	)
+	staffOrderHandler := orderhttp.NewStaffHandler(orderStatusService).WithQueries(orderapp.NewStaffOrderQueries(orderRepo))
 
 	r.Route("/api/v1", func(apiRouter chi.Router) {
 		cataloghttp.RegisterRoutes(apiRouter, catalogHandler)
 		identityhttp.RegisterRoutes(apiRouter, authHandler, adminHandler, tokenIssuer, registerIPLimiter, loginIPLimiter)
 		carthttp.RegisterRoutes(apiRouter, cartHandler, tokenIssuer)
 		orderhttp.RegisterRoutes(apiRouter, orderHandler, tokenIssuer)
+		orderhttp.RegisterStaffRoutes(apiRouter, staffOrderHandler, tokenIssuer)
 	})
 
 	deliveryRepository := deliverymysql.NewRepository(db)
@@ -201,6 +213,39 @@ func main() {
 		return auth.Authenticate(tokenIssuer)(auth.RequirePermission("stock:adjust")(next))
 	}
 	inventoryhttp.RegisterRoutes(r, inventoryHandler, requireStockAdjust)
+
+	// 07-admin-catalog — staff catalogue management and image administration.
+	catalogAdminRepository := catalogmysql.NewRepository(db)
+	catalogAdminService := catalogapp.NewCatalogAdminService(catalogAdminRepository, nil)
+	cataloghttp.RegisterAdminRoutes(r, cataloghttp.NewAdminHandler(catalogAdminService), guardPermission(tokenIssuer, "catalog:write"))
+	if cfg.S3EndpointURL != "" {
+		imageStorage, err := catalogmysql.NewImageStorage(cfg.S3EndpointURL, cfg.S3AccessKey, cfg.S3SecretKey, cfg.S3Bucket)
+		if err != nil {
+			logger.Error("image storage setup failed", "error", err)
+			os.Exit(1)
+		}
+		imageRepository := catalogmysql.NewImageRepository(db)
+		imageService := catalogapp.NewImageService(imageStorage, imageRepository)
+		cataloghttp.RegisterImageRoutes(r, cataloghttp.NewImageHandler(imageService).WithBaseURL(cfg.S3PublicURL), guardPermission(tokenIssuer, "catalog:image:write"))
+	}
+
+	// 09-management-reporting — read-only views behind reports:view (MANAGER). With
+	// REPORTING_DB_DSN set it uses its own narrow brightbuy_reporting pool (SEC-REPORTING-1).
+	var reportingRepository *reportingmysql.Repository
+	if cfg.ReportingDSN != "" {
+		reportingRepository, err = reportingmysql.NewRepository(cfg.ReportingDSN)
+		if err != nil {
+			logger.Error("reporting database setup failed", "error", err)
+			os.Exit(1)
+		}
+		defer reportingRepository.Close()
+	} else {
+		reportingRepository = reportingmysql.NewRepositoryFromDB(db)
+	}
+	requireReportsView := func(next http.Handler) http.Handler {
+		return auth.Authenticate(tokenIssuer)(auth.RequirePermission("reports:view")(next))
+	}
+	reportinghttp.RegisterRoutes(r, reportinghttp.NewHandler(reportingapp.NewService(reportingRepository)), requireReportsView)
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,
@@ -262,5 +307,13 @@ func handleReadiness(db *sql.DB) http.HandlerFunc {
 		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
+	}
+}
+
+// guardPermission composes Authenticate (401 without a valid session) with RequirePermission (403
+// without the permission code) — the order matters, see internal/shared/auth/middleware.go.
+func guardPermission(tokens *auth.TokenIssuer, code string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return auth.Authenticate(tokens)(auth.RequirePermission(code)(next))
 	}
 }

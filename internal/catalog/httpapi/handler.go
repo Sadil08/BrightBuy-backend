@@ -7,16 +7,24 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 )
 
 type CatalogHandler struct {
-	service *app.CatalogService
+	imageBaseURL string
+	service      *app.CatalogService
 }
 
 func NewCatalogHandler(service *app.CatalogService) *CatalogHandler {
 	return &CatalogHandler{service: service}
+}
+
+// WithImageBaseURL sets the public base (CDN or bucket URL) product-image object keys are served from.
+func (h *CatalogHandler) WithImageBaseURL(base string) *CatalogHandler {
+	h.imageBaseURL = strings.TrimRight(base, "/")
+	return h
 }
 
 // setCacheHeaders applies the Cache-Control half of the cache policy plan.md §1 calls for on this
@@ -159,7 +167,7 @@ func (h *CatalogHandler) GetProduct(w http.ResponseWriter, r *http.Request) {
 	// to." Note the * is in front of a VARIABLE here, not a type — same symbol, different meaning
 	// depending on where it shows up, which is a little confusing at first.
 	setCacheHeaders(w)
-	httpx.WriteJSON(w, http.StatusOK, toProductDTO(*product))
+	httpx.WriteJSON(w, http.StatusOK, toProductDTO(*product, h.imageBaseURL))
 }
 
 // RegisterRoutes wires each handler method to the actual URL path it answers for — this is the
