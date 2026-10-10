@@ -96,7 +96,7 @@ func toCategoryDTOs(categories []domain.Category) []CategoryDTO {
 func toProductDTO(p domain.Product, imageBaseURL string) ProductDTO {
 	images := make([]ImageDTO, 0, len(p.Images))
 	for i, img := range p.Images {
-		images = append(images, ImageDTO{ImageID: img.ID, URL: imageBaseURL + "/" + img.ObjectKey, SortOrder: i, IsPrimary: i == 0})
+		images = append(images, ImageDTO{ImageID: img.ID, URL: imageURL(imageBaseURL, img.ID, img.ObjectKey), SortOrder: i, IsPrimary: i == 0})
 	}
 	return ProductDTO{
 		Images:      images,

@@ -98,7 +98,8 @@ Or run everything in containers: `docker compose up --build`.
 | `DB_CA_CERT` | no | PEM of the CA for a managed MySQL with a private CA (enables verified TLS) |
 | `REPORTING_DB_DSN` | no | read-only `brightbuy_reporting` credential; reporting uses the main pool if unset |
 | `S3_ENDPOINT_URL`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET` | no | object store for product images; image routes are only mounted when the endpoint is set |
-| `S3_PUBLIC_URL` | no | public base URL images are served from (default `<endpoint>/<bucket>`) |
+| `S3_REGION` | no | pins the signing region; needed for Backblaze B2 (`eu-central-003`) and R2 (`auto`) |
+| `S3_PUBLIC_URL` | no | only for a **public** bucket/CDN. Leave empty for a **private** bucket: images are then served through the API (`GET /api/v1/images/{id}`, proxied by the frontend at `/api/images/{id}`) |
 
 ## Database migrations
 

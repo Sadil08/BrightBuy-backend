@@ -137,3 +137,42 @@ func pngHTTPFixture(t *testing.T) []byte {
 	}
 	return output.Bytes()
 }
+
+type lookupRepositoryStub struct{ imageRepositoryStub }
+
+func (lookupRepositoryStub) GetImage(_ context.Context, id int64) (domain.Image, error) {
+	if id == 404 {
+		return domain.Image{}, domain.ErrNotFound
+	}
+	return domain.Image{ID: id, ObjectKey: "products/1/abc", ContentType: "image/png"}, nil
+}
+
+func TestPrivateBucketImagesAreServedThroughTheAPI(t *testing.T) {
+	r := chi.NewRouter()
+	handler := NewImageHandler(app.NewImageService(imageStorageStub{openPayload: []byte("PNGDATA")}, lookupRepositoryStub{}))
+	RegisterImagePublicRoute(r, handler)
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/images/9", nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != "PNGDATA" || rec.Header().Get("Content-Type") != "image/png" {
+		t.Fatalf("got %d %q %q", rec.Code, rec.Body.String(), rec.Header().Get("Content-Type"))
+	}
+	if rec.Header().Get("Cache-Control") == "" {
+		t.Error("images should be cacheable")
+	}
+
+	rec = httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/images/404", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown image = %d, want 404", rec.Code)
+	}
+}
+
+func TestImageURLUsesPublicBaseOnlyWhenConfigured(t *testing.T) {
+	if got := imageURL("", 7, "products/1/k"); got != "/api/images/7" {
+		t.Errorf("private mode url = %q", got)
+	}
+	if got := imageURL("https://cdn.test", 7, "products/1/k"); got != "https://cdn.test/products/1/k" {
+		t.Errorf("public mode url = %q", got)
+	}
+}

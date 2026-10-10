@@ -179,3 +179,27 @@ func newObjectKey(productID int64) (string, error) {
 	}
 	return fmt.Sprintf("products/%d/%s", productID, hex.EncodeToString(randomBytes)), nil
 }
+
+// ImageLookup is the optional repository capability behind serving images through the API. It is a
+// separate interface so storage backends/stubs that only upload don't have to implement it.
+type ImageLookup interface {
+	GetImage(context.Context, int64) (domain.Image, error)
+}
+
+// Open streams one stored image. This is what makes a PRIVATE bucket work: the bucket is never exposed,
+// the API reads the object with its own credentials and the frontend caches the result.
+func (s *ImageService) Open(ctx context.Context, imageID int64) (io.ReadCloser, string, error) {
+	lookup, ok := s.repo.(ImageLookup)
+	if !ok || imageID <= 0 {
+		return nil, "", domain.ErrNotFound
+	}
+	img, err := lookup.GetImage(ctx, imageID)
+	if err != nil {
+		return nil, "", err
+	}
+	body, err := s.storage.Open(ctx, img.ObjectKey)
+	if err != nil {
+		return nil, "", err
+	}
+	return body, img.ContentType, nil
+}

@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -18,6 +20,15 @@ type ImageHandler struct {
 
 func NewImageHandler(service *app.ImageService) *ImageHandler {
 	return &ImageHandler{service: service}
+}
+
+// imageURL is the address shoppers' browsers load an image from: the configured public base
+// (public bucket / CDN) + object key, or, with no base (private bucket), the API-served route.
+func imageURL(base string, id int64, objectKey string) string {
+	if base == "" {
+		return fmt.Sprintf("/api/images/%d", id)
+	}
+	return base + "/" + objectKey
 }
 
 // WithBaseURL sets the public base the stored object keys are served from (same value as the catalog's).
@@ -93,7 +104,7 @@ func (h *ImageHandler) confirm(w http.ResponseWriter, r *http.Request) {
 		writeImageError(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusCreated, productImageResponse{ImageID: image.ID, URL: h.baseURL + "/" + image.ObjectKey})
+	httpx.WriteJSON(w, http.StatusCreated, productImageResponse{ImageID: image.ID, URL: imageURL(h.baseURL, image.ID, image.ObjectKey)})
 }
 
 func (h *ImageHandler) delete(w http.ResponseWriter, r *http.Request) {
@@ -114,4 +125,28 @@ func (h *ImageHandler) delete(w http.ResponseWriter, r *http.Request) {
 
 func writeImageError(w http.ResponseWriter, err error) {
 	writeServiceError(w, err)
+}
+
+// RegisterImagePublicRoute serves product images from a private bucket. Public by design (a product
+// photo is catalogue content, exactly like the product page) — the bucket itself stays closed.
+func RegisterImagePublicRoute(r chi.Router, handler *ImageHandler) {
+	r.Get("/api/v1/images/{imageID}", handler.serve)
+}
+
+func (h *ImageHandler) serve(w http.ResponseWriter, r *http.Request) {
+	imageID, ok := pathID(w, r, "imageID")
+	if !ok {
+		return
+	}
+	body, contentType, err := h.service.Open(r.Context(), imageID)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	defer body.Close()
+	w.Header().Set("Content-Type", contentType)
+	// Object keys are random and never reused, so an image id's bytes never change: cache hard.
+	w.Header().Set("Cache-Control", "public, max-age=86400, immutable")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	_, _ = io.Copy(w, body)
 }

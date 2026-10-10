@@ -226,7 +226,9 @@ func main() {
 		}
 		imageRepository := catalogmysql.NewImageRepository(db)
 		imageService := catalogapp.NewImageService(imageStorage, imageRepository)
-		cataloghttp.RegisterImageRoutes(r, cataloghttp.NewImageHandler(imageService).WithBaseURL(cfg.S3PublicURL), guardPermission(tokenIssuer, "catalog:image:write"))
+		imageHandler := cataloghttp.NewImageHandler(imageService).WithBaseURL(cfg.S3PublicURL)
+		cataloghttp.RegisterImageRoutes(r, imageHandler, guardPermission(tokenIssuer, "catalog:image:write"))
+		cataloghttp.RegisterImagePublicRoute(r, imageHandler)
 	}
 
 	// 09-management-reporting — read-only views behind reports:view (MANAGER). With

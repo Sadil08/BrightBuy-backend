@@ -47,3 +47,16 @@ func (r *ImageRepository) DeleteImage(ctx context.Context, productID, imageID in
 }
 
 var _ app.ImageRepository = (*ImageRepository)(nil)
+
+// GetImage returns one stored image's metadata (used to serve it through the API when the bucket is private).
+func (r *ImageRepository) GetImage(ctx context.Context, imageID int64) (domain.Image, error) {
+	var img domain.Image
+	err := r.db.QueryRowContext(ctx, `SELECT image_id, product_id, object_key, content_type FROM product_image WHERE image_id = ?`, imageID).
+		Scan(&img.ID, &img.ProductID, &img.ObjectKey, &img.ContentType)
+	if err == sql.ErrNoRows {
+		return domain.Image{}, domain.ErrNotFound
+	}
+	return img, err
+}
+
+var _ app.ImageLookup = (*ImageRepository)(nil)
