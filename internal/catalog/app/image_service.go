@@ -29,6 +29,9 @@ type ImageRepository interface {
 	DeleteImage(context.Context, int64, int64) (string, error)
 }
 
+// PresignTTL is how long a presigned upload URL stays valid (openapi: expires in 5 minutes).
+const PresignTTL = 5 * time.Minute
+
 type UploadURL struct {
 	ObjectKey string `json:"object_key"`
 	URL       string `json:"upload_url"`
@@ -59,7 +62,7 @@ func (s *ImageService) PresignUpload(ctx context.Context, productID int64, conte
 	if err != nil {
 		return UploadURL{}, err
 	}
-	url, err := s.storage.PresignUpload(ctx, key, contentType, 15*time.Minute)
+	url, err := s.storage.PresignUpload(ctx, key, contentType, PresignTTL)
 	if err != nil {
 		return UploadURL{}, err
 	}

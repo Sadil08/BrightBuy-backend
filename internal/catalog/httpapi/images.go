@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -10,11 +12,18 @@ import (
 )
 
 type ImageHandler struct {
+	baseURL string
 	service *app.ImageService
 }
 
 func NewImageHandler(service *app.ImageService) *ImageHandler {
 	return &ImageHandler{service: service}
+}
+
+// WithBaseURL sets the public base the stored object keys are served from (same value as the catalog's).
+func (h *ImageHandler) WithBaseURL(base string) *ImageHandler {
+	h.baseURL = strings.TrimRight(base, "/")
+	return h
 }
 
 // RegisterImageRoutes mounts the image routes; guard authenticates and checks `catalog:image:write`
@@ -28,13 +37,29 @@ func RegisterImageRoutes(r chi.Router, handler *ImageHandler, guard func(http.Ha
 	})
 }
 
+// Wire shapes match openapi.yaml (ImageUploadUrlRequest / ImageUploadUrl / ImageConfirmRequest /
+// ProductImage). ContentType on confirm is the type the client declared; the service cross-checks it
+// against the file's magic bytes.
 type uploadURLRequest struct {
-	ContentType string `json:"content_type"`
+	ContentType string `json:"contentType"`
+}
+
+type uploadURLResponse struct {
+	UploadURL string    `json:"uploadUrl"`
+	ObjectKey string    `json:"objectKey"`
+	ExpiresAt time.Time `json:"expiresAt"`
 }
 
 type confirmImageRequest struct {
-	ObjectKey   string `json:"object_key"`
-	ContentType string `json:"content_type"`
+	ObjectKey   string `json:"objectKey"`
+	ContentType string `json:"contentType"`
+}
+
+type productImageResponse struct {
+	ImageID   int64  `json:"imageId"`
+	URL       string `json:"url"`
+	SortOrder int    `json:"sortOrder"`
+	IsPrimary bool   `json:"isPrimary"`
 }
 
 func (h *ImageHandler) presignUpload(w http.ResponseWriter, r *http.Request) {
@@ -51,7 +76,7 @@ func (h *ImageHandler) presignUpload(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, result)
+	httpx.WriteJSON(w, http.StatusOK, uploadURLResponse{UploadURL: result.URL, ObjectKey: result.ObjectKey, ExpiresAt: time.Now().UTC().Add(app.PresignTTL)})
 }
 
 func (h *ImageHandler) confirm(w http.ResponseWriter, r *http.Request) {
@@ -68,7 +93,7 @@ func (h *ImageHandler) confirm(w http.ResponseWriter, r *http.Request) {
 		writeImageError(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusCreated, image)
+	httpx.WriteJSON(w, http.StatusCreated, productImageResponse{ImageID: image.ID, URL: h.baseURL + "/" + image.ObjectKey})
 }
 
 func (h *ImageHandler) delete(w http.ResponseWriter, r *http.Request) {

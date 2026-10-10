@@ -53,7 +53,7 @@ func imageTestRouter() chi.Router {
 }
 
 func TestImageRoutesRequireImagePermission(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/staff/products/1/images/upload-url", bytes.NewBufferString(`{"content_type":"image/png"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/staff/products/1/images/upload-url", bytes.NewBufferString(`{"contentType":"image/png"}`))
 	response := httptest.NewRecorder()
 	imageTestRouter().ServeHTTP(response, req)
 	if response.Code != http.StatusForbidden {
@@ -62,7 +62,7 @@ func TestImageRoutesRequireImagePermission(t *testing.T) {
 }
 
 func TestImagePresignRequiresDistinctImagePermission(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/staff/products/1/images/upload-url", bytes.NewBufferString(`{"content_type":"image/png"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/staff/products/1/images/upload-url", bytes.NewBufferString(`{"contentType":"image/png"}`))
 	req = req.WithContext(auth.ContextWithClaims(req.Context(), &auth.Claims{Permissions: []string{"catalog:write"}}))
 	response := httptest.NewRecorder()
 	imageTestRouter().ServeHTTP(response, req)
@@ -72,7 +72,7 @@ func TestImagePresignRequiresDistinctImagePermission(t *testing.T) {
 }
 
 func TestImagePresignReturnsUploadURL(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/staff/products/1/images/upload-url", bytes.NewBufferString(`{"content_type":"image/png"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/staff/products/1/images/upload-url", bytes.NewBufferString(`{"contentType":"image/png"}`))
 	req = req.WithContext(auth.ContextWithClaims(req.Context(), &auth.Claims{Permissions: []string{"catalog:image:write"}}))
 	response := httptest.NewRecorder()
 	imageTestRouter().ServeHTTP(response, req)
@@ -86,7 +86,7 @@ func TestImageConfirmReturnsCreated(t *testing.T) {
 	handler := NewImageHandler(app.NewImageService(storage, imageRepositoryStub{}))
 	router := chi.NewRouter()
 	RegisterImageRoutes(router, handler, auth.RequirePermission("catalog:image:write"))
-	req := authorizedRequest(http.MethodPost, "/api/v1/staff/products/1/images", `{"object_key":"products/1/upload","content_type":"image/png"}`, "catalog:image:write")
+	req := authorizedRequest(http.MethodPost, "/api/v1/staff/products/1/images", `{"objectKey":"products/1/upload","contentType":"image/png"}`, "catalog:image:write")
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, req)
 	if response.Code != http.StatusCreated {
@@ -95,7 +95,7 @@ func TestImageConfirmReturnsCreated(t *testing.T) {
 }
 
 func TestImageConfirmMapsInvalidMetadataToBadRequest(t *testing.T) {
-	req := authorizedRequest(http.MethodPost, "/api/v1/staff/products/1/images", `{"object_key":"wrong-prefix","content_type":"image/png"}`, "catalog:image:write")
+	req := authorizedRequest(http.MethodPost, "/api/v1/staff/products/1/images", `{"objectKey":"wrong-prefix","contentType":"image/png"}`, "catalog:image:write")
 	response := httptest.NewRecorder()
 	imageTestRouter().ServeHTTP(response, req)
 	if response.Code != http.StatusBadRequest {
