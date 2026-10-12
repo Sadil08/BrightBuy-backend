@@ -109,7 +109,7 @@ func (h *CatalogHandler) ListProducts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	setCacheHeaders(w)
-	httpx.WriteJSON(w, http.StatusOK, toProductListDTO(products, filter.Page, filter.PageSize, total))
+	httpx.WriteJSON(w, http.StatusOK, toProductListDTO(products, filter.Page, filter.PageSize, total, h.imageBaseURL))
 }
 
 func (h *CatalogHandler) GetProduct(w http.ResponseWriter, r *http.Request) {

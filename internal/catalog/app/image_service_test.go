@@ -46,6 +46,8 @@ func (fakeImageRepository) DeleteImage(context.Context, int64, int64) (string, e
 	return "products/1/image", nil
 }
 
+func (fakeImageRepository) SetPrimaryImage(context.Context, int64, int64) error { return nil }
+
 func pngFixture(t *testing.T) []byte {
 	t.Helper()
 	var output bytes.Buffer

@@ -39,7 +39,7 @@ func (r *ProductRepository) List(ctx context.Context, filter app.ListFilter) ([]
 	// second, independent slice avoids any risk of the two queries' arguments aliasing each other.
 	where, args := buildProductWhere(filter)
 	offset := (filter.Page - 1) * filter.PageSize
-	query := "SELECT p.product_id, p.name, COALESCE(p.description, '') FROM product p " + where +
+	query := "SELECT p.product_id, p.name, COALESCE(p.description, ''), p.primary_image_id FROM product p " + where +
 		" ORDER BY p.product_id LIMIT ? OFFSET ?"
 	args = append(args, filter.PageSize, offset)
 
@@ -52,8 +52,12 @@ func (r *ProductRepository) List(ctx context.Context, filter app.ListFilter) ([]
 	var products []domain.Product
 	for rows.Next() {
 		var p domain.Product
-		if err := rows.Scan(&p.ID, &p.Name, &p.Description); err != nil {
+		var primary sql.NullInt64
+		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &primary); err != nil {
 			return nil, 0, fmt.Errorf("mysql: scan product: %w", err)
+		}
+		if primary.Valid {
+			p.PrimaryImageID = &primary.Int64
 		}
 		products = append(products, p)
 	}
@@ -62,6 +66,9 @@ func (r *ProductRepository) List(ctx context.Context, filter app.ListFilter) ([]
 	}
 
 	if err := r.attachVariants(ctx, products); err != nil {
+		return nil, 0, err
+	}
+	if err := r.attachPreviewImages(ctx, products); err != nil {
 		return nil, 0, err
 	}
 
@@ -153,6 +160,44 @@ func (r *ProductRepository) attachVariants(ctx context.Context, products []domai
 	return rows.Err()
 }
 
+// attachPreviewImages gives every product on a list page the single image its card should show: the
+// one staff picked, else the oldest. One batched query for the whole page, like attachVariants.
+func (r *ProductRepository) attachPreviewImages(ctx context.Context, products []domain.Product) error {
+	if len(products) == 0 {
+		return nil
+	}
+	ids := make([]any, len(products))
+	indexByProductID := make(map[int]int, len(products))
+	placeholders := make([]string, len(products))
+	for i, p := range products {
+		ids[i] = p.ID
+		indexByProductID[p.ID] = i
+		placeholders[i] = "?"
+	}
+	rows, err := r.db.QueryContext(ctx, fmt.Sprintf(
+		`SELECT product_id, image_id, object_key FROM product_image WHERE product_id IN (%s) ORDER BY product_id, image_id`,
+		strings.Join(placeholders, ","),
+	), ids...)
+	if err != nil {
+		return fmt.Errorf("mysql: list preview images for product page: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var productID int
+		var img domain.ProductImage
+		if err := rows.Scan(&productID, &img.ID, &img.ObjectKey); err != nil {
+			return fmt.Errorf("mysql: scan preview image: %w", err)
+		}
+		p := &products[indexByProductID[productID]]
+		chosen := p.PrimaryImageID != nil && *p.PrimaryImageID == img.ID
+		if len(p.Images) == 0 || chosen {
+			p.Images = []domain.ProductImage{img}
+		}
+	}
+	return rows.Err()
+}
+
 // GetByID implements the product-detail query (FR-CATALOG-2,5,7): the product row, its active
 // categories, and its active variants with full attributes and derived stock status. Four small,
 // separate queries rather than one giant JOIN — a product-category-variant-attribute join would
@@ -198,10 +243,11 @@ func (r *ProductRepository) GetByID(ctx context.Context, id int) (*domain.Produc
 
 func (r *ProductRepository) selectProduct(ctx context.Context, id int) (*domain.Product, error) {
 	var p domain.Product
+	var primary sql.NullInt64
 	err := r.db.QueryRowContext(ctx,
-		`SELECT product_id, name, COALESCE(description, ''), updated_at FROM product WHERE product_id = ? AND is_active = TRUE`,
+		`SELECT product_id, name, COALESCE(description, ''), updated_at, primary_image_id FROM product WHERE product_id = ? AND is_active = TRUE`,
 		id,
-	).Scan(&p.ID, &p.Name, &p.Description, &p.UpdatedAt)
+	).Scan(&p.ID, &p.Name, &p.Description, &p.UpdatedAt, &primary)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			// A deactivated OR nonexistent product both land here identically — plan.md §6: "gone
@@ -209,6 +255,9 @@ func (r *ProductRepository) selectProduct(ctx context.Context, id int) (*domain.
 			return nil, fmt.Errorf("mysql: product %d: %w", id, app.ErrNotFound)
 		}
 		return nil, fmt.Errorf("mysql: get product %d: %w", id, err)
+	}
+	if primary.Valid {
+		p.PrimaryImageID = &primary.Int64
 	}
 	return &p, nil
 }

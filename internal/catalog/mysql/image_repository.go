@@ -46,6 +46,20 @@ func (r *ImageRepository) DeleteImage(ctx context.Context, productID, imageID in
 	return objectKey, nil
 }
 
+// SetPrimaryImage marks one of the product's own images as its preview. Touching updated_at busts the
+// product-detail ETag so the change shows up straight away.
+func (r *ImageRepository) SetPrimaryImage(ctx context.Context, productID, imageID int64) error {
+	var owned bool
+	if err := r.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM product_image WHERE image_id = ? AND product_id = ?)`, imageID, productID).Scan(&owned); err != nil {
+		return err
+	}
+	if !owned {
+		return domain.ErrNotFound
+	}
+	_, err := r.db.ExecContext(ctx, `UPDATE product SET primary_image_id = ?, updated_at = CURRENT_TIMESTAMP WHERE product_id = ?`, imageID, productID)
+	return err
+}
+
 var _ app.ImageRepository = (*ImageRepository)(nil)
 
 // GetImage returns one stored image's metadata (used to serve it through the API when the bucket is private).

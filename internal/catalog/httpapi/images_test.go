@@ -45,6 +45,8 @@ func (s imageRepositoryStub) DeleteImage(context.Context, int64, int64) (string,
 	return "products/1/image", s.deleteErr
 }
 
+func (imageRepositoryStub) SetPrimaryImage(context.Context, int64, int64) error { return nil }
+
 func imageTestRouter() chi.Router {
 	r := chi.NewRouter()
 	handler := NewImageHandler(app.NewImageService(imageStorageStub{}, imageRepositoryStub{}))

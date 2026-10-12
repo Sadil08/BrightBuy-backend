@@ -95,7 +95,7 @@ func toCategoryDTOs(categories []domain.Category) []CategoryDTO {
 // here; Categories and Variants are just converted element-by-element via the two helpers above.
 func toProductDTO(p domain.Product, imageBaseURL string) ProductDTO {
 	images := make([]ImageDTO, 0, len(p.Images))
-	for i, img := range p.Images {
+	for i, img := range orderedImages(p) {
 		images = append(images, ImageDTO{ImageID: img.ID, URL: imageURL(imageBaseURL, img.ID, img.ObjectKey), SortOrder: i, IsPrimary: i == 0})
 	}
 	return ProductDTO{
@@ -106,6 +106,26 @@ func toProductDTO(p domain.Product, imageBaseURL string) ProductDTO {
 		Categories:  toCategoryDTOs(p.Categories),
 		Variants:    toVariantDTOs(p.Variants),
 	}
+}
+
+// orderedImages puts the staff-chosen preview first and leaves the rest in upload order, so "the first
+// image is the primary one" holds whether or not anyone has chosen.
+func orderedImages(p domain.Product) []domain.ProductImage {
+	if p.PrimaryImageID == nil {
+		return p.Images
+	}
+	ordered := make([]domain.ProductImage, 0, len(p.Images))
+	for _, img := range p.Images {
+		if img.ID == *p.PrimaryImageID {
+			ordered = append(ordered, img)
+		}
+	}
+	for _, img := range p.Images {
+		if img.ID != *p.PrimaryImageID {
+			ordered = append(ordered, img)
+		}
+	}
+	return ordered
 }
 
 // toProductSummaryDTO is different from every function above it in this file: it doesn't just copy
@@ -129,7 +149,7 @@ func toProductDTO(p domain.Product, imageBaseURL string) ProductDTO {
 // priceFrom stays at Money's zero value ("0.00"). Same lesson as the SQL WHERE clauses back in
 // ProductRepository: letting a loop's natural behavior handle the empty case is often simpler and
 // more robust than writing an explicit branch for it.
-func toProductSummaryDTO(p domain.Product) ProductSummaryDTO {
+func toProductSummaryDTO(p domain.Product, imageBaseURL string) ProductSummaryDTO {
 	var priceFrom money.Money
 	stockStatus := "OUT_OF_STOCK"
 
@@ -142,20 +162,24 @@ func toProductSummaryDTO(p domain.Product) ProductSummaryDTO {
 		}
 	}
 
-	return ProductSummaryDTO{
+	summary := ProductSummaryDTO{
 		ProductID:   p.ID,
 		Name:        p.Name,
 		PriceFrom:   priceFrom,
 		StockStatus: stockStatus,
 	}
+	if images := orderedImages(p); len(images) > 0 {
+		summary.ImageURL = imageURL(imageBaseURL, images[0].ID, images[0].ObjectKey)
+	}
+	return summary
 }
 
 // toProductSummaryDTOs: the same "convert each element" pattern one more time, for a whole page of
 // products at once.
-func toProductSummaryDTOs(products []domain.Product) []ProductSummaryDTO {
+func toProductSummaryDTOs(products []domain.Product, imageBaseURL string) []ProductSummaryDTO {
 	dtos := make([]ProductSummaryDTO, 0, len(products))
 	for _, p := range products {
-		dtos = append(dtos, toProductSummaryDTO(p))
+		dtos = append(dtos, toProductSummaryDTO(p, imageBaseURL))
 	}
 	return dtos
 }
@@ -164,9 +188,9 @@ func toProductSummaryDTOs(products []domain.Product) []ProductSummaryDTO {
 // (Items) plus the pagination metadata a client needs to render page controls (Page). page and size
 // are just handed back as given (whatever the client asked for, or the service's clamped defaults);
 // total comes from ProductRepository.List's second return value, the COUNT(*) result.
-func toProductListDTO(products []domain.Product, page, size, total int) ProductListDTO {
+func toProductListDTO(products []domain.Product, page, size, total int, imageBaseURL string) ProductListDTO {
 	return ProductListDTO{
-		Items: toProductSummaryDTOs(products),
+		Items: toProductSummaryDTOs(products, imageBaseURL),
 		Page: PageDTO{
 			Page:  page,
 			Size:  size,

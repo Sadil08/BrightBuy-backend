@@ -14,7 +14,7 @@ type ProductDTO struct {
 	Images      []ImageDTO    `json:"images"`
 }
 
-// ImageDTO matches openapi ProductImage. The first image is primary; order is upload order.
+// ImageDTO matches openapi ProductImage. The staff-chosen preview comes first (else the oldest).
 type ImageDTO struct {
 	ImageID   int64  `json:"imageId"`
 	URL       string `json:"url"`
@@ -46,6 +46,8 @@ type ProductSummaryDTO struct {
 	Name        string      `json:"name"`
 	PriceFrom   money.Money `json:"priceFrom"`
 	StockStatus string      `json:"stockStatus"`
+	// ImageURL is the product's preview image; empty (and omitted) until staff upload one.
+	ImageURL string `json:"imageUrl,omitempty"`
 }
 
 type PageDTO struct {

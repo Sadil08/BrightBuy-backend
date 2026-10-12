@@ -45,6 +45,7 @@ func RegisterImageRoutes(r chi.Router, handler *ImageHandler, guard func(http.Ha
 		r.Post("/api/v1/staff/products/{productID}/images/upload-url", handler.presignUpload)
 		r.Post("/api/v1/staff/products/{productID}/images", handler.confirm)
 		r.Delete("/api/v1/staff/products/{productID}/images/{imageID}", handler.delete)
+		r.Put("/api/v1/staff/products/{productID}/images/{imageID}/primary", handler.setPrimary)
 	})
 }
 
@@ -117,6 +118,22 @@ func (h *ImageHandler) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.service.Delete(r.Context(), productID, imageID); err != nil {
+		writeImageError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *ImageHandler) setPrimary(w http.ResponseWriter, r *http.Request) {
+	productID, ok := pathID(w, r, "productID")
+	if !ok {
+		return
+	}
+	imageID, ok := pathID(w, r, "imageID")
+	if !ok {
+		return
+	}
+	if err := h.service.SetPrimary(r.Context(), productID, imageID); err != nil {
 		writeImageError(w, err)
 		return
 	}

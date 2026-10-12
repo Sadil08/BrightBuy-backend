@@ -27,6 +27,7 @@ type ImageRepository interface {
 	ProductExists(context.Context, int64) (bool, error)
 	CreateImage(context.Context, domain.Image) (domain.Image, error)
 	DeleteImage(context.Context, int64, int64) (string, error)
+	SetPrimaryImage(context.Context, int64, int64) error
 }
 
 // PresignTTL is how long a presigned upload URL stays valid (openapi: expires in 5 minutes).
@@ -121,6 +122,14 @@ func (s *ImageService) Delete(ctx context.Context, productID, imageID int64) err
 		return err
 	}
 	return s.storage.Delete(ctx, objectKey)
+}
+
+// SetPrimary picks which of a product's images represents it on the home page and the shop grid.
+func (s *ImageService) SetPrimary(ctx context.Context, productID, imageID int64) error {
+	if productID <= 0 || imageID <= 0 {
+		return fmt.Errorf("%w: image IDs must be positive", domain.ErrValidation)
+	}
+	return s.repo.SetPrimaryImage(ctx, productID, imageID)
 }
 
 func (s *ImageService) reject(ctx context.Context, objectKey, reason string) (domain.Image, error) {

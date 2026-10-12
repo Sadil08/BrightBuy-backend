@@ -14,7 +14,10 @@ type Product struct {
 	Description string
 	Categories  []Category
 	Variants    []Variant
-	Images      []ProductImage // oldest first; the first is the primary image
+	// Images are oldest first. PrimaryImageID is the image staff picked as the product's preview, if any;
+	// it is nil until they choose one, and the oldest image stands in.
+	Images         []ProductImage
+	PrimaryImageID *int64
 	// UpdatedAt is the most recent change to EITHER this product's own row OR any of its variants'
 	// rows (whichever is later) — see mysql.ProductRepository.GetByID. It exists for exactly one
 	// reason: httpapi derives a weak ETag from it (plan.md §1) for the product-detail endpoint. It's
