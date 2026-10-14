@@ -50,7 +50,7 @@ func (m *mockOrderStatusRepo) SetStatus(ctx context.Context, tx *sql.Tx, id int,
 	m.set = true
 	return nil
 }
-func (m *mockOrderStatusRepo) CallCancelOrder(ctx context.Context, id int, acting int) error {
+func (m *mockOrderStatusRepo) CallCancelOrder(ctx context.Context, tx *sql.Tx, id int, acting int) error {
 	return nil
 }
 

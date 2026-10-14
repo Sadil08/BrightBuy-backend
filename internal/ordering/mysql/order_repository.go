@@ -292,8 +292,8 @@ func (r *OrderRepository) SetStatus(ctx context.Context, tx *sql.Tx, orderID int
 	return nil
 }
 
-func (r *OrderRepository) CallCancelOrder(ctx context.Context, orderID int, actingUserID int) error {
-	_, err := r.db.ExecContext(ctx, "CALL sp_cancel_order(?, ?)", orderID, actingUserID)
+func (r *OrderRepository) CallCancelOrder(ctx context.Context, tx *sql.Tx, orderID int, actingUserID int) error {
+	_, err := tx.ExecContext(ctx, "CALL sp_cancel_order(?, ?)", orderID, actingUserID)
 	if err != nil {
 		var mysqlErr *mysqlDriver.MySQLError
 		if errors.As(err, &mysqlErr) && mysqlErr.Number == 4010 {

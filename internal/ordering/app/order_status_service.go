@@ -35,7 +35,7 @@ type OrderStatusRepository interface {
 	GetByIDForStaff(context.Context, int) (*domain.Order, error)
 	SetActingUser(context.Context, *sql.Tx, int) error
 	SetStatus(context.Context, *sql.Tx, int, string) error
-	CallCancelOrder(context.Context, int, int) error
+	CallCancelOrder(context.Context, *sql.Tx, int, int) error
 }
 
 type PaymentStatusRepository interface {
@@ -80,7 +80,9 @@ func (s *OrderStatusService) UpdateStatus(ctx context.Context, actingUserID, ord
 }
 
 func (s *OrderStatusService) Cancel(ctx context.Context, actingUserID, orderID int) error {
-	return s.repo.CallCancelOrder(ctx, orderID, actingUserID)
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		return s.repo.CallCancelOrder(ctx, tx, orderID, actingUserID)
+	})
 }
 
 // StaffOrderRepository is the read side of the order manager's console.

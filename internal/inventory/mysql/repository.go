@@ -9,6 +9,7 @@ import (
 
 	"brightbuy-backend/internal/inventory/app"
 	"brightbuy-backend/internal/inventory/domain"
+	"brightbuy-backend/internal/shared/dbx"
 )
 
 type Repository struct {
@@ -111,14 +112,17 @@ func (r *Repository) Adjust(
 	delta int,
 	reason string,
 ) error {
-	_, err := r.db.ExecContext(
-		ctx,
-		`CALL sp_adjust_stock(?, ?, ?, ?)`,
-		variantID,
-		delta,
-		reason,
-		actingUserID,
-	)
+	err := dbx.WithTx(ctx, r.db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(
+			ctx,
+			`CALL sp_adjust_stock(?, ?, ?, ?)`,
+			variantID,
+			delta,
+			reason,
+			actingUserID,
+		)
+		return err
+	})
 	if err == nil {
 		return nil
 	}
