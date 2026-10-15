@@ -75,6 +75,9 @@ func (r *ProductRepository) List(ctx context.Context, filter app.ListFilter) ([]
 	return products, total, nil
 }
 
+// likeEscaper neutralises LIKE wildcards in user input (MySQL's default escape character is a backslash).
+var likeEscaper = strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`)
+
 // buildProductWhere turns a filter into a WHERE clause and its matching argument list — built as
 // one function so the count query and the page query can never accidentally drift apart (plan.md
 // §5.1). Every value is still a `?` placeholder; only the CLAUSE STRUCTURE (whether a condition is
@@ -91,8 +94,10 @@ func buildProductWhere(filter app.ListFilter) (string, []any) {
 	var args []any
 
 	if filter.Query != "" {
-		where += " AND MATCH(p.name, p.description) AGAINST (? IN NATURAL LANGUAGE MODE)" // FR-CATALOG-3
-		args = append(args, filter.Query)
+		// FULLTEXT only matches whole words ("hal" would never find "Halo"), so a name-contains
+		// LIKE is OR'd in to support partial words and search-as-you-type suggestions.
+		where += " AND (MATCH(p.name, p.description) AGAINST (? IN NATURAL LANGUAGE MODE) OR p.name LIKE ?)" // FR-CATALOG-3
+		args = append(args, filter.Query, "%"+likeEscaper.Replace(filter.Query)+"%")
 	}
 	if filter.CategoryID != nil {
 		where += " AND EXISTS (SELECT 1 FROM product_category pc WHERE pc.product_id = p.product_id AND pc.category_id = ?)" // FR-CATALOG-4
