@@ -98,3 +98,22 @@ jobs:
           tags: |
             ${{ env.IMAGE }}:${{ github.sha }}
             ${{ env.IMAGE }}:latest
+
+  # Continuous deployment: after the image is built and published, tell Render to deploy. Uses
+  # Render's private deploy hook URL (Render service -> Settings -> Deploy Hook) stored as the
+  # RENDER_DEPLOY_HOOK_URL repository secret. Stays inert (and green) until that secret exists.
+  # If you use this, set Render's Auto-Deploy to "Off" so a push doesn't deploy twice.
+  deploy-render:
+    needs: build-image
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    env:
+      RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+    steps:
+      - name: Trigger Render deploy
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "::notice::Render deploy skipped: set the RENDER_DEPLOY_HOOK_URL repository secret to enable it."
+            exit 0
+          fi
+          curl -fsS -X POST "$RENDER_DEPLOY_HOOK_URL"
