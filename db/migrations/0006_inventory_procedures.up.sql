@@ -15,7 +15,7 @@ BEGIN
       INTO v_stock
       FROM product_variant
      WHERE variant_id = p_variant_id
-     FOR UPDATE; --For the database lock for that specific data. Soo no race condition can occur
+     FOR UPDATE; -- row lock on this variant, so concurrent adjustments can't race
 
     IF v_stock IS NULL THEN
         SIGNAL SQLSTATE '45000'
