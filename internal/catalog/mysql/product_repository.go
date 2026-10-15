@@ -41,6 +41,12 @@ func (r *ProductRepository) List(ctx context.Context, filter app.ListFilter) ([]
 	offset := (filter.Page - 1) * filter.PageSize
 	query := "SELECT p.product_id, p.name, COALESCE(p.description, ''), p.primary_image_id FROM product p " + where +
 		" ORDER BY p.product_id LIMIT ? OFFSET ?"
+	if filter.Query != "" {
+		// Best matches first: name starts with the query, then name contains it, then the rest.
+		query = strings.Replace(query, "ORDER BY p.product_id", "ORDER BY (p.name LIKE ?) DESC, (p.name LIKE ?) DESC, p.product_id", 1)
+		esc := likeEscaper.Replace(filter.Query)
+		args = append(args, esc+"%", "%"+esc+"%")
+	}
 	args = append(args, filter.PageSize, offset)
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
@@ -94,10 +100,20 @@ func buildProductWhere(filter app.ListFilter) (string, []any) {
 	var args []any
 
 	if filter.Query != "" {
-		// FULLTEXT only matches whole words ("hal" would never find "Halo"), so a name-contains
-		// LIKE is OR'd in to support partial words and search-as-you-type suggestions.
-		where += " AND (MATCH(p.name, p.description) AGAINST (? IN NATURAL LANGUAGE MODE) OR p.name LIKE ?)" // FR-CATALOG-3
-		args = append(args, filter.Query, "%"+likeEscaper.Replace(filter.Query)+"%")
+		// FULLTEXT only matches whole words ("lap" would never find "Laptop"), so it is OR'd with a
+		// per-word contains-match over name, description and category name: every typed word must
+		// appear somewhere, which gives partial words, multi-word queries and category searches.
+		words := strings.Fields(filter.Query)
+		wordConds := make([]string, 0, len(words))
+		var wordArgs []any
+		for _, w := range words {
+			pat := "%" + likeEscaper.Replace(w) + "%"
+			wordConds = append(wordConds, "(p.name LIKE ? OR p.description LIKE ? OR EXISTS (SELECT 1 FROM product_category qc JOIN category c ON c.category_id = qc.category_id WHERE qc.product_id = p.product_id AND c.name LIKE ?))")
+			wordArgs = append(wordArgs, pat, pat, pat)
+		}
+		where += " AND (MATCH(p.name, p.description) AGAINST (? IN NATURAL LANGUAGE MODE) OR (" + strings.Join(wordConds, " AND ") + "))" // FR-CATALOG-3
+		args = append(args, filter.Query)
+		args = append(args, wordArgs...)
 	}
 	if filter.CategoryID != nil {
 		where += " AND EXISTS (SELECT 1 FROM product_category pc WHERE pc.product_id = p.product_id AND pc.category_id = ?)" // FR-CATALOG-4
